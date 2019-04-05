@@ -1689,14 +1689,11 @@ rops_write_role_protocol_ws(struct lws *wsi, unsigned char *buf, size_t len,
 		break;
 	default:
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-		lwsl_notice("LWS_EXT_CB_PAYLOAD_TX: in len %d\n",
-				(int)pmdrx.eb_in.len);
-		// m = (int)ebuf.len;
 		/* returns 0 if no more tx pending, 1 if more pending */
 		n = lws_ext_cb_active(wsi, LWS_EXT_CB_PAYLOAD_TX, &pmdrx, *wp);
 		if (n < 0)
 			return -1;
-		lwsl_notice("ext in remaining %d, out %d compressed"
+		lwsl_debug("ext in remaining %d, out %d compressed"
 			       " (wp 0x%x)\n", (int)pmdrx.eb_in.len,
 			       (int)pmdrx.eb_out.len, *wp);
 

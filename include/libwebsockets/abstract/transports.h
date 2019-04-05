@@ -27,4 +27,3 @@ LWS_VISIBLE LWS_EXTERN void
 lws_abstract_copy(lws_abstract_t *dest, const lws_abstract_t *src);
 
 LWS_VISIBLE LWS_EXTERN lws_abstract_t lws_abstract_transport_cli_raw_skt;
-LWS_VISIBLE LWS_EXTERN const struct lws_protocols protocol_abs_client_raw_skt;

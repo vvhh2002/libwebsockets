@@ -37,12 +37,6 @@ email_sent_or_failed(struct lws_smtp_email *email, void *buf, size_t len)
 	return 0;
 }
 
-/* the abstract raw client backend used by smtp client */
-static const struct lws_protocols *pprotocols[] = {
-	&protocol_abs_client_raw_skt,
-	NULL
-};
-
 int main(int argc, const char **argv)
 {
 	int n = 1, logs = LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE;
@@ -74,7 +68,6 @@ int main(int argc, const char **argv)
 	memset(&info, 0, sizeof info); /* otherwise uninitialized garbage */
 	info.port = CONTEXT_PORT_NO_LISTEN;
 	info.options = LWS_SERVER_OPTION_EXPLICIT_VHOSTS;
-	info.pprotocols = pprotocols;
 
 	context = lws_create_context(&info);
 	if (!context) {

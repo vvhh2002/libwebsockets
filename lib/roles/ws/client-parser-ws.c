@@ -32,7 +32,7 @@ int lws_ws_client_rx_sm(struct lws *wsi, unsigned char c)
 	struct lws_ext_pm_deflate_rx_ebufs pmdrx;
 	unsigned short close_code;
 	unsigned char *pp;
-	int handled, m;
+	int handled, m, lencheck;
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 	int rx_draining_ext = 0, n;
 #endif
@@ -521,7 +521,12 @@ ping_drop:
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 drain_extension:
 #endif
-		while (pmdrx.eb_in.len) {
+		do {
+
+			lwsl_notice("%s: pmdrx.eb_in.len: %d\n", __func__,
+					(int)pmdrx.eb_in.len);
+
+			lencheck = pmdrx.eb_in.len;
 
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 		lwsl_ext("%s: +++ passing %d %p to ext\n", __func__,
@@ -608,6 +613,9 @@ utf8_fail:
 		    lwsi_state(wsi) == LRS_AWAITING_CLOSE_ACK)
 			goto already_done;
 
+		if (pmdrx.eb_in.len == lencheck)
+			pmdrx.eb_in.len -= pmdrx.eb_out.len;
+
 		m = wsi->protocol->callback(wsi,
 			(enum lws_callback_reasons)callback_action,
 			wsi->user_space, pmdrx.eb_out.token, pmdrx.eb_out.len);
@@ -621,7 +629,7 @@ utf8_fail:
 		if (m)
 			return 1;
 
-		} /* while ebuf len */
+		} while (pmdrx.eb_in.len); /* while ebuf len */
 
 already_done:
 		wsi->ws->rx_ubuf_head = 0;
