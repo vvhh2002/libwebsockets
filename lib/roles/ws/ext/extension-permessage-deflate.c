@@ -179,7 +179,7 @@ lws_extension_callback_pm_deflate(struct lws_context *context,
 		return ret;
 
 	case LWS_EXT_CB_PAYLOAD_RX:
-		lwsl_ext(" %s: LWS_EXT_CB_PAYLOAD_RX: in %d, existing in %d\n",
+		lwsl_notice(" %s: LWS_EXT_CB_PAYLOAD_RX: in %d, existing in %d\n",
 			 __func__, pmdrx->eb_in.len, priv->rx.avail_in);
 		if (!(wsi->ws->rsv_first_msg & 0x40) || (wsi->ws->opcode & 8))
 			return 0;
@@ -241,7 +241,7 @@ lws_extension_callback_pm_deflate(struct lws_context *context,
 		}
 
 		n = inflate(&priv->rx, Z_NO_FLUSH);
-		lwsl_ext("inflate ret %d, avi %d, avo %d, wsifinal %d\n", n,
+		lwsl_notice("inflate ret %d, avi %d, avo %d, wsifinal %d\n", n,
 			 priv->rx.avail_in, priv->rx.avail_out, wsi->ws->final);
 		switch (n) {
 		case Z_NEED_DICT:

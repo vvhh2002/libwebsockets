@@ -920,7 +920,6 @@ if (LWS_WITH_NETWORK)
 		lib/core-net/adopt.c
 		lib/roles/pipe/ops-pipe.c
 		lib/abstract/abstract.c
-		lib/abstract/transports/raw-skt.c
 	)
 	
 	if (LWS_WITH_STATS)
@@ -974,6 +973,7 @@ endif()
 
 if (LWS_ROLE_RAW)
 	list(APPEND SOURCES
+		lib/abstract/transports/raw-skt.c
 		lib/roles/raw-skt/ops-raw-skt.c
 		lib/roles/raw-file/ops-raw-file.c)
 endif()

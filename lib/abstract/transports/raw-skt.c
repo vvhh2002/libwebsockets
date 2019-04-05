@@ -160,6 +160,7 @@ lws_atcrs_tx(lws_abs_user_t *abs_priv, uint8_t *buf, size_t len)
 	return 0;
 }
 
+#if !defined(LWS_WITHOUT_CLIENT)
 static int
 lws_atcrs_client_conn(lws_abs_user_t *abs_priv, struct lws_vhost *vh,
 		      const char *ip, uint16_t port, int tls_flags)
@@ -202,6 +203,7 @@ lws_atcrs_client_conn(lws_abs_user_t *abs_priv, struct lws_vhost *vh,
 
 	return 0;
 }
+#endif
 
 static int
 lws_atcrs_close(lws_abs_user_t *abs_priv)
@@ -284,7 +286,11 @@ lws_abstract_t lws_abstract_transport_cli_raw_skt = {
 	lws_atcrs_destroy,
 
 	lws_atcrs_tx,
+#if defined(LWS_WITHOUT_CLIENT)
+	NULL,
+#else
 	lws_atcrs_client_conn,
+#endif
 	lws_atcrs_close,
 	lws_atcrs_ask_for_writeable,
 	lws_atcrs_set_timeout,

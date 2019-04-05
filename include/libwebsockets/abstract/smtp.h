@@ -160,7 +160,5 @@ LWS_VISIBLE LWS_EXTERN void
 lws_smtp_client_destroy(lws_smtp_client_t **email);
 
 
-extern const struct lws_protocols protocol_abs_client_raw_skt;
-
 #endif
 //@}
