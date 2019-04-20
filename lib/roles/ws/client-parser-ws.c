@@ -29,16 +29,18 @@
 int lws_ws_client_rx_sm(struct lws *wsi, unsigned char c)
 {
 	int callback_action = LWS_CALLBACK_CLIENT_RECEIVE;
-	int handled, m;
+	struct lws_ext_pm_deflate_rx_ebufs pmdrx;
 	unsigned short close_code;
-	struct lws_tokens ebuf;
 	unsigned char *pp;
+	int handled, m;
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 	int rx_draining_ext = 0, n;
 #endif
 
-	ebuf.token = NULL;
-	ebuf.len = 0;
+	pmdrx.eb_in.token = NULL;
+	pmdrx.eb_in.len = 0;
+	pmdrx.eb_out.token = NULL;
+	pmdrx.eb_out.len = 0;
 
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 	if (wsi->ws->rx_draining_ext) {
@@ -322,11 +324,18 @@ int lws_ws_client_rx_sm(struct lws *wsi, unsigned char c)
 		if (wsi->ws->this_frame_masked && !wsi->ws->all_zero_nonce)
 			c ^= wsi->ws->mask[(wsi->ws->mask_idx++) & 3];
 
+		/*
+		 * unmask and collect the payload body in
+		 * rx_ubuf_head + LWS_PRE
+		 */
+
 		wsi->ws->rx_ubuf[LWS_PRE + (wsi->ws->rx_ubuf_head++)] = c;
 
 		if (--wsi->ws->rx_packet_length == 0) {
 			/* spill because we have the whole frame */
 			wsi->lws_rx_parse_state = LWS_RXPS_NEW;
+			lwsl_notice("%s: spilling as we have the whole frame\n",
+					__func__);
 			goto spill;
 		}
 
@@ -343,6 +352,9 @@ int lws_ws_client_rx_sm(struct lws *wsi, unsigned char c)
 			break;
 
 		/* spill because we filled our rx buffer */
+
+		lwsl_notice("%s: spilling as we filled our rx buffer\n",
+				__func__);
 spill:
 
 		handled = 0;
@@ -481,30 +493,51 @@ ping_drop:
 
 		/*
 		 * No it's real payload, pass it up to the user callback.
+		 *
+		 * We have been statefully collecting it in the
+		 * LWS_RXPS_WS_FRAME_PAYLOAD clause above.
+		 *
 		 * It's nicely buffered with the pre-padding taken care of
-		 * so it can be sent straight out again using lws_write
+		 * so it can be sent straight out again using lws_write.
+		 *
+		 * However, now we have a chunk of it, we want to deal with it
+		 * all here.  Since this may be input to permessage-deflate and
+		 * there are block limits on that for input and output, we may
+		 * need to iterate.
 		 */
 		if (handled)
 			goto already_done;
 
-		ebuf.token = &wsi->ws->rx_ubuf[LWS_PRE];
-		ebuf.len = wsi->ws->rx_ubuf_head;
+		pmdrx.eb_in.token = &wsi->ws->rx_ubuf[LWS_PRE];
+		pmdrx.eb_in.len = wsi->ws->rx_ubuf_head;
+
+		/* for the non-pm-deflate case */
+
+		pmdrx.eb_out = pmdrx.eb_in;
+
+		lwsl_notice("%s: starting disbursal of %d deframed rx\n",
+				__func__, wsi->ws->rx_ubuf_head);
 
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 drain_extension:
-		lwsl_ext("%s: passing %d to ext\n", __func__, ebuf.len);
+#endif
+		while (pmdrx.eb_in.len) {
 
-		n = lws_ext_cb_active(wsi, LWS_EXT_CB_PAYLOAD_RX, &ebuf, 0);
+#if !defined(LWS_WITHOUT_EXTENSIONS)
+		lwsl_ext("%s: +++ passing %d %p to ext\n", __func__,
+				pmdrx.eb_in.len, pmdrx.eb_in.token);
+
+		n = lws_ext_cb_active(wsi, LWS_EXT_CB_PAYLOAD_RX, &pmdrx, 0);
 		lwsl_ext("Ext RX returned %d\n", n);
 		if (n < 0) {
 			wsi->socket_is_permanently_unusable = 1;
 			return -1;
 		}
 #endif
-		lwsl_debug("post inflate ebuf len %d\n", ebuf.len);
+		lwsl_debug("post inflate ebuf len %d\n", pmdrx.eb_out.len);
 
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-		if (rx_draining_ext && !ebuf.len) {
+		if (rx_draining_ext && !pmdrx.eb_out.len) {
 			lwsl_debug("   --- ending drain on 0 read result\n");
 			goto already_done;
 		}
@@ -512,8 +545,8 @@ drain_extension:
 
 		if (wsi->ws->check_utf8 && !wsi->ws->defeat_check_utf8) {
 			if (lws_check_utf8(&wsi->ws->utf8,
-					   (unsigned char *)ebuf.token,
-					   ebuf.len)) {
+					   (unsigned char *)pmdrx.eb_out.token,
+					   pmdrx.eb_out.len)) {
 				lws_close_reason(wsi,
 					LWS_CLOSE_STATUS_INVALID_PAYLOAD,
 					(uint8_t *)"bad utf8", 8);
@@ -533,20 +566,21 @@ drain_extension:
 					(uint8_t *)"partial utf8", 12);
 utf8_fail:
 				lwsl_info("utf8 error\n");
-				lwsl_hexdump_info(ebuf.token, ebuf.len);
+				lwsl_hexdump_info(pmdrx.eb_out.token,
+						  pmdrx.eb_out.len);
 
 				return -1;
 			}
 		}
 
-		if (ebuf.len < 0 &&
+		if (pmdrx.eb_out.len < 0 &&
 		    callback_action != LWS_CALLBACK_CLIENT_RECEIVE_PONG)
 			goto already_done;
 
-		if (!ebuf.token)
+		if (!pmdrx.eb_out.token)
 			goto already_done;
 
-		ebuf.token[ebuf.len] = '\0';
+		pmdrx.eb_out.token[pmdrx.eb_out.len] = '\0';
 
 		if (!wsi->protocol->callback)
 			goto already_done;
@@ -559,7 +593,7 @@ utf8_fail:
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 				n &&
 #endif
-				ebuf.len)
+				pmdrx.eb_out.len)
 			/* extension had more... main loop will come back
 			 * we want callback to be done with this set, if so,
 			 * because lws_is_final() hides it was final until the
@@ -576,16 +610,18 @@ utf8_fail:
 
 		m = wsi->protocol->callback(wsi,
 			(enum lws_callback_reasons)callback_action,
-			wsi->user_space, ebuf.token, ebuf.len);
+			wsi->user_space, pmdrx.eb_out.token, pmdrx.eb_out.len);
 
 		wsi->ws->first_fragment = 0;
 
-		// lwsl_notice("%s: bulk ws rx: input used %d, output %d\n",
-		//	__func__, wsi->ws->rx_ubuf_head, ebuf.len);
+		lwsl_debug("%s: bulk ws rx: input used %d, output %d\n",
+			__func__, wsi->ws->rx_ubuf_head, pmdrx.eb_out.len);
 
 		/* if user code wants to close, let caller know */
 		if (m)
 			return 1;
+
+		} /* while ebuf len */
 
 already_done:
 		wsi->ws->rx_ubuf_head = 0;

@@ -144,6 +144,16 @@ struct _lws_websocket_related {
 #endif
 };
 
+/*
+ * we need to separately track what's happening with both compressed rx in
+ * and with inflated rx out that will be passed to the user code
+ */
+
+struct lws_ext_pm_deflate_rx_ebufs {
+	struct lws_tokens eb_in;
+	struct lws_tokens eb_out;
+};
+
 int
 lws_ws_handshake_client(struct lws *wsi, unsigned char **buf, size_t len);
 
