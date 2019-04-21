@@ -96,6 +96,9 @@ try_pollout:
 	if (!(pollfd->revents & LWS_POLLOUT))
 		return LWS_HPI_RET_HANDLED;
 
+	if (lwsi_state(wsi) == LRS_WAITING_CONNECT)
+		lws_client_connect_3(wsi, NULL, 0);
+
 	/* one shot */
 	if (lws_change_pollfd(wsi, LWS_POLLOUT, 0)) {
 		lwsl_notice("%s a\n", __func__);
@@ -223,7 +226,7 @@ struct lws_role_ops role_ops_raw_skt = {
 #else
 					NULL,
 #endif
-	/* adoption_cb clnt, srv */	{ LWS_CALLBACK_RAW_ADOPT,
+	/* adoption_cb clnt, srv */	{ LWS_CALLBACK_RAW_CONNECTED,
 					  LWS_CALLBACK_RAW_ADOPT },
 	/* rx_cb clnt, srv */		{ LWS_CALLBACK_RAW_RX,
 					  LWS_CALLBACK_RAW_RX },
