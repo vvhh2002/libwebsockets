@@ -1,7 +1,7 @@
 /*
  * libwebsockets - lws-plugin-ssh-base - sshd.c
  *
- * Copyright (C) 2017 - 2018 Andy Green <andy@warmcat.com>
+ * Copyright (C) 2017 - 2019 Andy Green <andy@warmcat.com>
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -2039,7 +2039,7 @@ lws_callback_raw_sshd(struct lws *wsi, enum lws_callback_reasons reason,
 		break;
 
         case LWS_CALLBACK_RAW_ADOPT:
-		lwsl_info("LWS_CALLBACK_RAW_ADOPT\n");
+		lwsl_err("LWS_CALLBACK_RAW_ADOPT\n");
 		if (!vhd)
 			return -1;
 		pss->next = vhd->live_pss_list;
