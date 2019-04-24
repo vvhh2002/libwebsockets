@@ -77,6 +77,7 @@ lws_extension_callback_pm_deflate(struct lws_context *context,
 	static unsigned char trail[] = { 0, 0, 0xff, 0xff };
 	int n, ret = 0, was_fin = 0, extra;
 	struct lws_ext_option_arg *oa;
+	unsigned int pend;
 
 	switch (reason) {
 	case LWS_EXT_CB_NAMED_OPTION_SET:
@@ -380,7 +381,8 @@ lws_extension_callback_pm_deflate(struct lws_context *context,
 		pmdrx->eb_out.token = (char *)priv->tx.next_out;
 		priv->tx.avail_out = 1 << priv->args[PMD_TX_BUF_PWR2];
 
-		if (priv->tx.avail_in) {
+		deflatePending(&priv->tx, &pend, Z_NULL);
+		if (priv->tx.avail_in || pend) {
 			n = deflate(&priv->tx, Z_SYNC_FLUSH);
 			if (n == Z_STREAM_ERROR) {
 				lwsl_ext("%s: Z_STREAM_ERROR\n", __func__);
