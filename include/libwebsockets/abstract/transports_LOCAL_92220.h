@@ -17,36 +17,13 @@
  *  License along with this library; if not, write to the Free Software
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
  *  MA  02110-1301  USA
+ *
+ * included from libwebsockets.h
  */
 
-#include <core/private.h>
-#include <abstract/private.h>
+typedef struct lws_abstract lws_abstract_t;
 
-extern lws_abstract_t lws_abstract_transport_cli_raw_skt;
+LWS_VISIBLE LWS_EXTERN void
+lws_abstract_copy(lws_abstract_t *dest, const lws_abstract_t *src);
 
-static const lws_abstract_t *available_abstractions[] = {
-	&lws_abstract_transport_cli_raw_skt,
-};
-
-/*
- * the definition is opaque, so a helper to copy it into place
- */
-
-void
-lws_abstract_copy(lws_abstract_t *dest, const lws_abstract_t *src)
-{
-	memcpy(dest, src, sizeof(*dest));
-}
-
-
-const lws_abstract_t *
-lws_abstract_get_by_name(const char *name)
-{
-	int n;
-
-	for (n = 0; n < (int)LWS_ARRAY_SIZE(available_abstractions); n++)
-		if (!strcmp(name, available_abstractions[n]->name))
-			return available_abstractions[n];
-
-	return NULL;
-}
+LWS_VISIBLE LWS_EXTERN lws_abstract_t lws_abstract_transport_cli_raw_skt;

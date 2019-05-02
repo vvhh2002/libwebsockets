@@ -282,6 +282,7 @@ lws_atcrs_state(lws_abs_user_t *abs_priv)
 }
 
 lws_abstract_t lws_abstract_transport_cli_raw_skt = {
+	"raw-skt",
 	lws_atcrs_create,
 	lws_atcrs_destroy,
 

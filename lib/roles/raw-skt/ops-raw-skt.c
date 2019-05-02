@@ -96,8 +96,10 @@ try_pollout:
 	if (!(pollfd->revents & LWS_POLLOUT))
 		return LWS_HPI_RET_HANDLED;
 
+#if !defined(LWS_WITHOUT_CLIENT)
 	if (lwsi_state(wsi) == LRS_WAITING_CONNECT)
 		lws_client_connect_3(wsi, NULL, 0);
+#endif
 
 	/* one shot */
 	if (lws_change_pollfd(wsi, LWS_POLLOUT, 0)) {

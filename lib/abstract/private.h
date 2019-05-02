@@ -40,6 +40,8 @@ typedef void lws_abs_t;
 
 typedef struct lws_abstract {
 
+	const char *name;
+
 	lws_abs_user_t * (*create)(struct lws_abstract *abs, void *user);
 	void (*destroy)(lws_abs_user_t **d);
 

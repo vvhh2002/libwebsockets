@@ -63,7 +63,7 @@ typedef struct lws_smtp_client_info {
 	char ip[32]; /**< Fill before init, eg, "127.0.0.1" */
 	char helo[32];	/**< Fill before init, eg, "myserver.com" */
 
-	lws_abstract_t *abs;	/**< abstract transport to use */
+	const lws_abstract_t *abs;	/**< abstract transport to use */
 	struct lws_vhost *vh;
 
 	time_t retry_interval;

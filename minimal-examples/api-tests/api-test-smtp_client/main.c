@@ -85,7 +85,7 @@ int main(int argc, const char **argv)
 
 	memset(&sci, 0, sizeof(sci));
 	sci.data = NULL /* stmp client specific user data */;
-	sci.abs = &lws_abstract_transport_cli_raw_skt;
+	sci.abs = lws_abstract_get_by_name("raw_skt");
 	sci.vh = vh;
 	lws_strncpy(sci.ip, "127.0.0.1", sizeof(sci.ip));
 	lws_strncpy(sci.helo, "lws-test-client", sizeof(sci.helo));
