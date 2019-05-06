@@ -140,6 +140,7 @@ struct _lws_websocket_related {
 	unsigned int extension_data_pending:1;
 	unsigned int rx_draining_ext:1;
 	unsigned int tx_draining_ext:1;
+	unsigned int pmd_trailer_application:1;
 
 	uint8_t count_act_ext;
 #endif

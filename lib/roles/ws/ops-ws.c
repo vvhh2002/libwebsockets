@@ -166,6 +166,14 @@ handle_first:
 				return -1;
 			}
 			wsi->ws->rsv_first_msg = (c & 0x70);
+#if !defined(LWS_WITHOUT_EXTENSIONS)
+			/*
+			 *  set the expectation that we will have to
+			 * fake up the zlib trailer to the inflator for this
+			 * frame
+			 */
+			wsi->ws->pmd_trailer_application = !!(c & 0x40);
+#endif
 			wsi->ws->frame_is_binary =
 			     wsi->ws->opcode == LWSWSOPC_BINARY_FRAME;
 			wsi->ws->first_fragment = 1;
@@ -588,107 +596,140 @@ ping_drop:
 drain_extension:
 #endif
 
-		while (pmdrx.eb_in.len) {
+		do {
 
-		// lwsl_notice("%s: passing %d to ext\n", __func__,
-		//		pmdrx.eb_in.len);
+//			lwsl_notice("%s: pmdrx.eb_in.len: %d\n", __func__,
+//					(int)pmdrx.eb_in.len);
 
-		if (lwsi_state(wsi) == LRS_RETURNED_CLOSE ||
-		    lwsi_state(wsi) == LRS_AWAITING_CLOSE_ACK)
-			goto already_done;
+			if (lwsi_state(wsi) == LRS_RETURNED_CLOSE ||
+			    lwsi_state(wsi) == LRS_AWAITING_CLOSE_ACK)
+				goto already_done;
+
+			n = PMDR_DID_NOTHING;
+
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-		lin = pmdrx.eb_in.len;
-		//if (lin)
-		//	lwsl_hexdump_notice(ebuf.token, ebuf.len);
-		n = lws_ext_cb_active(wsi, LWS_EXT_CB_PAYLOAD_RX, &pmdrx, 0);
-		lwsl_debug("%s: ext says %d / ebuf.len %d\n", __func__,
-			   n, pmdrx.eb_out.len);
-		if (wsi->ws->rx_draining_ext)
-			already_processed &= ~ALREADY_PROCESSED_NO_CB;
+			lin = pmdrx.eb_in.len;
+			//if (lin)
+			//	lwsl_hexdump_notice(ebuf.token, ebuf.len);
+			lwsl_ext("%s: +++ passing %d %p to ext\n", __func__,
+					pmdrx.eb_in.len, pmdrx.eb_in.token);
+
+			n = lws_ext_cb_active(wsi, LWS_EXT_CB_PAYLOAD_RX, &pmdrx, 0);
+			lwsl_debug("%s: ext says %d / ebuf.len %d\n", __func__,
+				   n, pmdrx.eb_out.len);
+			if (wsi->ws->rx_draining_ext)
+				already_processed &= ~ALREADY_PROCESSED_NO_CB;
 #endif
-		/*
-		 * ebuf may be pointing somewhere completely different now,
-		 * it's the output
-		 */
-#if !defined(LWS_WITHOUT_EXTENSIONS)
-		if (n < 0) {
+
 			/*
-			 * we may rely on this to get RX, just drop connection
+			 * ebuf may be pointing somewhere completely different
+			 * now, it's the output
 			 */
-			wsi->socket_is_permanently_unusable = 1;
-			return -1;
-		}
-#endif
-		if (
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-		    rx_draining_ext &&
-#endif
-		    pmdrx.eb_out.len == 0)
-			goto already_done;
-
-		if (
-#if !defined(LWS_WITHOUT_EXTENSIONS)
-		    n &&
-#endif
-		    pmdrx.eb_out.len)
-			/* extension had more... main loop will come back */
-			lws_add_wsi_to_draining_ext_list(wsi);
-		else
-			lws_remove_wsi_from_draining_ext_list(wsi);
-
-		if (wsi->ws->check_utf8 && !wsi->ws->defeat_check_utf8) {
-			if (lws_check_utf8(&wsi->ws->utf8,
-					   (unsigned char *)pmdrx.eb_out.token,
-					   pmdrx.eb_out.len)) {
-				lws_close_reason(wsi,
-					LWS_CLOSE_STATUS_INVALID_PAYLOAD,
-					(uint8_t *)"bad utf8", 8);
-				goto utf8_fail;
-			}
-
-			/* we are ending partway through utf-8 character? */
-			if (!wsi->ws->rx_packet_length && wsi->ws->final &&
-			    wsi->ws->utf8 && !n) {
-				lwsl_info("FINAL utf8 error\n");
-				lws_close_reason(wsi,
-					LWS_CLOSE_STATUS_INVALID_PAYLOAD,
-					(uint8_t *)"partial utf8", 12);
-utf8_fail:
-				lwsl_notice("utf8 error\n");
-				lwsl_hexdump_notice(pmdrx.eb_out.token,
-						    pmdrx.eb_out.len);
-
+			if (n < 0) {
+				/*
+				 * we may rely on this to get RX, just drop
+				 * connection
+				 */
+				wsi->socket_is_permanently_unusable = 1;
 				return -1;
 			}
-		}
+			if (n == PMDR_DID_NOTHING)
+				break;
+#endif
+			lwsl_notice("%s: post ext ret %d, ebuf in %d / out %d\n",
+				    __func__, n, pmdrx.eb_in.len,
+				    pmdrx.eb_out.len);
 
-		if (!wsi->wsistate_pre_close && (pmdrx.eb_out.len >= 0 ||
-		    callback_action == LWS_CALLBACK_RECEIVE_PONG)) {
-			if (pmdrx.eb_out.len)
-				pmdrx.eb_out.token[pmdrx.eb_out.len] = '\0';
+#if !defined(LWS_WITHOUT_EXTENSIONS)
+			if (rx_draining_ext && !pmdrx.eb_out.len) {
+				lwsl_debug("   --- ending drain on 0 read\n");
+				goto already_done;
+			}
 
-			if (wsi->protocol->callback &&
-			    !(already_processed & ALREADY_PROCESSED_NO_CB)) {
-				if (callback_action == LWS_CALLBACK_RECEIVE_PONG)
-					lwsl_info("Doing pong callback\n");
+			if (n == PMDR_HAS_PENDING)
+				/*
+				 * extension had more...
+				 * main loop will come back
+				 */
+				lws_add_wsi_to_draining_ext_list(wsi);
+			else
+				lws_remove_wsi_from_draining_ext_list(wsi);
 
-				ret = user_callback_handle_rxflow(
-						wsi->protocol->callback,
-						wsi, (enum lws_callback_reasons)
-						     callback_action,
+			rx_draining_ext = wsi->ws->rx_draining_ext;
+#endif
+
+			if (wsi->ws->check_utf8 && !wsi->ws->defeat_check_utf8) {
+				if (lws_check_utf8(&wsi->ws->utf8,
+						   (unsigned char *)pmdrx.eb_out.token,
+						   pmdrx.eb_out.len)) {
+					lws_close_reason(wsi,
+						LWS_CLOSE_STATUS_INVALID_PAYLOAD,
+						(uint8_t *)"bad utf8", 8);
+					goto utf8_fail;
+				}
+
+				/* we are ending partway through utf-8 character? */
+				if (!wsi->ws->rx_packet_length &&
+				    wsi->ws->final && wsi->ws->utf8
+#if !defined(LWS_WITHOUT_EXTENSIONS)
+				    /* if ext not negotiated, going to be UNKNOWN */
+				    && (n == PMDR_EMPTY_FINAL || n == PMDR_UNKNOWN)
+#endif
+				) {
+					lwsl_info("FINAL utf8 error\n");
+					lws_close_reason(wsi,
+						LWS_CLOSE_STATUS_INVALID_PAYLOAD,
+						(uint8_t *)"partial utf8", 12);
+utf8_fail:
+					lwsl_notice("utf8 error\n");
+					lwsl_hexdump_notice(pmdrx.eb_out.token,
+							    pmdrx.eb_out.len);
+
+					return -1;
+				}
+			}
+
+			/* if pmd not enabled, in == out */
+
+			if (n == PMDR_DID_NOTHING ||
+			    n == PMDR_UNKNOWN)
+				pmdrx.eb_in.len -= pmdrx.eb_out.len;
+
+			if (!wsi->wsistate_pre_close &&
+			    (pmdrx.eb_out.len >= 0 ||
+			     callback_action == LWS_CALLBACK_RECEIVE_PONG ||
+						       n == PMDR_EMPTY_FINAL)) {
+				if (pmdrx.eb_out.len)
+					pmdrx.eb_out.token[pmdrx.eb_out.len] = '\0';
+
+				if (wsi->protocol->callback &&
+				    !(already_processed & ALREADY_PROCESSED_NO_CB)) {
+					if (callback_action ==
+						      LWS_CALLBACK_RECEIVE_PONG)
+						lwsl_info("Doing pong callback\n");
+
+					ret = user_callback_handle_rxflow(
+						wsi->protocol->callback, wsi,
+						(enum lws_callback_reasons)
+							     callback_action,
 						wsi->user_space,
 						pmdrx.eb_out.token,
 						pmdrx.eb_out.len);
+				}
+				wsi->ws->first_fragment = 0;
 			}
-			wsi->ws->first_fragment = 0;
-		}
 
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-		if (!lin)
-			break;
+			if (!lin)
+				break;
 #endif
 
-		} /* while ebuf in to send */
+		} while (pmdrx.eb_in.len
+#if !defined(LWS_WITHOUT_EXTENSIONS)
+				|| rx_draining_ext
+#endif
+		);
 
 already_done:
 		wsi->ws->rx_ubuf_head = 0;
@@ -987,7 +1028,9 @@ rops_handle_POLLIN_ws(struct lws_context_per_thread *pt, struct lws *wsi,
 #endif
 	}
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-	if (wsi->ws->tx_draining_ext)
+	if (wsi->ws->tx_draining_ext) {
+		lws_handle_POLLOUT_event(wsi, pollfd);
+		//lwsl_notice("%s: tx drain\n", __func__);
 		/*
 		 * We cannot deal with new RX until the TX ext path has
 		 * been drained.  It's because new rx will, eg, crap on
@@ -996,7 +1039,9 @@ rops_handle_POLLIN_ws(struct lws_context_per_thread *pt, struct lws *wsi,
 		 * TX ext drain path MUST go through event loop to avoid
 		 * blocking.
 		 */
+		lws_callback_on_writable(wsi);
 		return LWS_HPI_RET_HANDLED;
+	}
 #endif
 	if ((pollfd->revents & LWS_POLLIN) && lws_is_flowcontrolled(wsi)) {
 		/* We cannot deal with any kind of new RX because we are
@@ -1325,7 +1370,7 @@ int rops_handle_POLLOUT_ws(struct lws *wsi)
 	 *	       fragments control packets can interleave OK.
 	 */
 	if (wsi->ws->tx_draining_ext) {
-		lwsl_notice("SERVICING TX EXT DRAINING\n");
+		lwsl_ext("SERVICING TX EXT DRAINING\n");
 		if (lws_write(wsi, NULL, 0, LWS_WRITE_CONTINUATION) < 0)
 			return LWS_HP_RET_BAIL_DIE;
 		/* leave POLLOUT active */
@@ -1624,7 +1669,7 @@ rops_write_role_protocol_ws(struct lws *wsi, unsigned char *buf, size_t len,
 		wsi->ws->tx_draining_ext_list = NULL;
 
 		wpt = *wp;
-		*wp = (wsi->ws->tx_draining_stashed_wp & 0xc0)|
+		*wp = (wsi->ws->tx_draining_stashed_wp & 0xc0) |
 				LWS_WRITE_CONTINUATION;
 
 		/*
@@ -1636,7 +1681,7 @@ rops_write_role_protocol_ws(struct lws *wsi, unsigned char *buf, size_t len,
 		if (!(wpt & LWS_WRITE_NO_FIN) && len)
 			*wp &= ~LWS_WRITE_NO_FIN;
 
-		lwsl_notice("FORCED draining wp to 0x%02X "
+		lwsl_ext("FORCED draining wp to 0x%02X "
 			 "(stashed 0x%02X, incoming 0x%02X)\n", *wp,
 			 wsi->ws->tx_draining_stashed_wp, wpt);
 		// assert(0);
@@ -1689,19 +1734,19 @@ rops_write_role_protocol_ws(struct lws *wsi, unsigned char *buf, size_t len,
 		break;
 	default:
 #if !defined(LWS_WITHOUT_EXTENSIONS)
-		/* returns 0 if no more tx pending, 1 if more pending */
 		n = lws_ext_cb_active(wsi, LWS_EXT_CB_PAYLOAD_TX, &pmdrx, *wp);
 		if (n < 0)
 			return -1;
-		lwsl_debug("ext in remaining %d, out %d compressed"
-			       " (wp 0x%x)\n", (int)pmdrx.eb_in.len,
-			       (int)pmdrx.eb_out.len, *wp);
+		lwsl_ext("%s: defl ext ret %d, ext in remaining %d, "
+			    "out %d compressed (wp 0x%x)\n", __func__, n,
+			    (int)pmdrx.eb_in.len, (int)pmdrx.eb_out.len, *wp);
 
-		if (n && pmdrx.eb_out.len) {
-			lwsl_notice("write drain len %d (wp 0x%x) SETTING "
-				 "tx_draining_ext (remaining in %d)\n",
-				 (int)pmdrx.eb_out.len, *wp,
-				 (int)pmdrx.eb_in.len);
+		if (n == PMDR_HAS_PENDING) {
+			lwsl_ext("%s: HAS PENDING: write drain len %d "
+				    "(wp 0x%x) SETTING tx_draining_ext "
+				    "(remaining in %d)\n", __func__,
+				    (int)pmdrx.eb_out.len, *wp,
+				    (int)pmdrx.eb_in.len);
 			/* extension requires further draining */
 			wsi->ws->tx_draining_ext = 1;
 			wsi->ws->tx_draining_ext_list =
@@ -1716,10 +1761,14 @@ rops_write_role_protocol_ws(struct lws *wsi, unsigned char *buf, size_t len,
 			 */
 			wsi->ws->tx_draining_stashed_wp = *wp;
 			/*
-			 * This is definitely not actually the last fragment,
-			 * because the extension asserted he has more coming.
-			 * So make sure this intermediate one doesn't go out
-			 * with a FIN.
+			 * Despite what we may have thought, this is definitely
+			 * NOT the last fragment, because the extension asserted
+			 * he has more coming.  For example, the extension may
+			 * be compressing, and has saved up everything until the
+			 * end, where the output is larger than one chunk.
+			 *
+			 * Make sure this intermediate one doesn't actually
+			 * go out with a FIN.
 			 */
 			*wp |= LWS_WRITE_NO_FIN;
 		}
