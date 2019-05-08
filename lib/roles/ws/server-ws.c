@@ -820,7 +820,7 @@ lws_ws_frame_rest_is_payload(struct lws *wsi, uint8_t **buf, size_t len)
 	    wsi->protocol->callback &&
 	    !wsi->wsistate_pre_close) {
 
-		lwsl_warn("%s: issuing zero length FIN pkt\n", __func__);
+		lwsl_ext("%s: issuing zero length FIN pkt\n", __func__);
 
 		if (user_callback_handle_rxflow(wsi->protocol->callback, wsi,
 						LWS_CALLBACK_RECEIVE,

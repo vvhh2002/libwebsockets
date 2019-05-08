@@ -1385,11 +1385,11 @@ int rops_handle_POLLOUT_ws(struct lws *wsi)
 	}
 
 	/*
-	 * check in on the active extensions, see if they
-	 * had pending stuff to spill... they need to get the
-	 * first look-in otherwise sequence will be disordered
+	 * Check in on the active extensions, see if they had pending stuff to
+	 * spill... they need to get the first look-in otherwise sequence will
+	 * be disordered.
 	 *
-	 * NULL, zero-length ebuf means just spill pending
+	 * coming here with a NULL, zero-length ebuf means just spill pending
 	 */
 
 	ret = 1;
