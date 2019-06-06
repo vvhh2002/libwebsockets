@@ -718,13 +718,6 @@ if (HAIKU)
 endif()
 
 CHECK_C_SOURCE_COMPILES(
-	"#include <strings.h>
-	#if __GNUC__
-	#pragma GCC diagnostic error \"-Wimplicit-function-declaration\"
-	#endif
-	int main(int argc, char **argv) { char buf[100]; bzero(buf, 100); return 0; }
-	" LWS_HAVE_BZERO)
-CHECK_C_SOURCE_COMPILES(
 	"#include <malloc.h>
 	int main(int argc, char **argv) { return malloc_trim(0); }
 	" LWS_HAVE_MALLOC_TRIM)
@@ -1768,6 +1761,9 @@ CHECK_FUNCTION_EXISTS(SSL_get0_alpn_selected LWS_HAVE_SSL_get0_alpn_selected)
 CHECK_FUNCTION_EXISTS(SSL_set_alpn_protos LWS_HAVE_SSL_set_alpn_protos)
 CHECK_FUNCTION_EXISTS(SSL_CTX_set_ciphersuites LWS_HAVE_SSL_CTX_set_ciphersuites)
 if (LWS_WITH_SSL AND NOT LWS_WITH_MBEDTLS)
+ if (UNIX)
+ set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} dl)
+ endif()
 CHECK_C_SOURCE_COMPILES("#include <openssl/ssl.h>\nint main(void) { STACK_OF(X509) *c = NULL; SSL_CTX *ctx = NULL; return (int)SSL_CTX_get_extra_chain_certs_only(ctx, &c); }\n" LWS_HAVE_SSL_EXTRA_CHAIN_CERTS)
 CHECK_C_SOURCE_COMPILES("#include <openssl/ssl.h>\nint main(void) { EVP_MD_CTX *md_ctx = NULL; EVP_MD_CTX_free(md_ctx); return 0; }\n" LWS_HAVE_EVP_MD_CTX_free)
 CHECK_FUNCTION_EXISTS(ECDSA_SIG_set0 LWS_HAVE_ECDSA_SIG_set0)
@@ -1966,6 +1962,9 @@ if ((LWS_ROLE_H1 OR LWS_ROLE_H2) AND NOT LWS_WITHOUT_TESTAPPS)
 			endif()
 			target_link_libraries(${TEST_NAME} websockets)
 			add_dependencies(${TEST_NAME} websockets)
+			if (UNIX AND LWS_WITH_SSL AND NOT LWS_WITH_MBEDTLS)
+				target_link_libraries(${TEST_NAME} dl)
+			endif()
 		endif()
 
 		if (LWS_WITH_HTTP_STREAM_COMPRESSION)
