@@ -177,15 +177,27 @@ lwsl_info("context created\n");
 	}
 #endif
 #if defined(__ANDROID__)
-		n = getrlimit ( RLIMIT_NOFILE,&rt);
-		if (-1 == n) {
+		n = getrlimit(RLIMIT_NOFILE, &rt);
+		if (n == -1) {
 			lwsl_err("Get RLIMIT_NOFILE failed!\n");
+
 			return NULL;
 		}
 		context->max_fds = rt.rlim_cur;
 #else
+#if defined(WIN32) || defined(_WIN32) || defined(LWS_AMAZON_RTOS)
 		context->max_fds = getdtablesize();
+#else
+		context->max_fds = sysconf(_SC_OPEN_MAX);
 #endif
+#endif
+
+		if (context->max_fds < 0) {
+			lwsl_err("%s: problem getting process max files\n",
+				 __func__);
+
+			return NULL;
+		}
 
 	if (info->count_threads)
 		context->count_threads = info->count_threads;
