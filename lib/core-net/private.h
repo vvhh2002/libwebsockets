@@ -279,7 +279,10 @@ struct lws_context_per_thread {
 
 	struct lws_dll dll_timeout_head;
 	struct lws_dll dll_hrtimer_head;
-	struct lws_dll2_owner dll_buflist_owner; /* guys with pending rxflow */
+	struct lws_dll2_owner dll_buflist_owner;  /* guys with pending rxflow */
+	struct lws_dll2_owner seq_owner;	  /* list of lws_sequencer-s */
+	struct lws_dll2_owner seq_pend_owner;  /* lws_seq-s with pending evts */
+	struct lws_dll2_owner seq_to_owner;  /* lws_seq-s with sorted timeout */
 
 #if defined(LWS_WITH_TLS)
 	struct lws_pt_tls tls;
@@ -289,6 +292,7 @@ struct lws_context_per_thread {
 	volatile struct lws_foreign_thread_pollfd * volatile foreign_pfd_list;
 #ifdef _WIN32
 	WSAEVENT events;
+	CRITICAL_SECTION interrupt_lock;
 #endif
 	lws_sockfd_type dummy_pipe_fds[2];
 	struct lws *pipe_wsi;
@@ -344,6 +348,9 @@ struct lws_context_per_thread {
 	unsigned char inside_service:1;
 	unsigned char event_loop_foreign:1;
 	unsigned char event_loop_destroy_processing_done:1;
+#ifdef _WIN32
+	unsigned char interrupt_requested:1;
+#endif
 };
 
 struct lws_conn_stats {
@@ -421,6 +428,8 @@ struct lws_vhost {
 	const struct lws_protocol_vhost_options *headers;
 	struct lws_dll *same_vh_protocol_heads;
 	struct lws_vhost *no_listener_vhost_list;
+	struct lws_dll2_owner abstract_instances_owner;
+
 #if !defined(LWS_NO_CLIENT)
 	struct lws_dll dll_cli_active_conns_head;
 #endif
@@ -910,6 +919,9 @@ lws_issue_raw(struct lws *wsi, unsigned char *buf, size_t len);
 LWS_EXTERN void
 lws_remove_from_timeout_list(struct lws *wsi);
 
+LWS_EXTERN int
+lws_sequencer_timeout_check(struct lws_context_per_thread *pt, time_t now);
+
 LWS_EXTERN struct lws * LWS_WARN_UNUSED_RESULT
 lws_client_connect_2(struct lws *wsi);
 
@@ -1022,6 +1034,9 @@ __lws_same_vh_protocol_remove(struct lws *wsi);
 LWS_EXTERN void
 lws_same_vh_protocol_insert(struct lws *wsi, int n);
 
+int
+lws_pt_do_pending_sequencer_events(struct lws_context_per_thread *pt);
+
 LWS_EXTERN int
 lws_broadcast(struct lws_context *context, int reason, void *in, size_t len);
 
@@ -1084,7 +1099,8 @@ int
 lws_buflist_aware_consume(struct lws *wsi, struct lws_tokens *ebuf, int used,
 			  int buffered);
 
-extern const struct lws_protocols protocol_abs_client_raw_skt;
+extern const struct lws_protocols protocol_abs_client_raw_skt,
+				  protocol_abs_client_unit_test;
 
 #ifdef __cplusplus
 };

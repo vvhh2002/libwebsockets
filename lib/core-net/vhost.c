@@ -56,12 +56,14 @@ const struct lws_event_loop_ops *available_event_libs[] = {
 	NULL
 };
 
+#if defined(LWS_WITH_ABSTRACT)
 const struct lws_protocols *available_abstract_protocols[] = {
 #if defined(LWS_ROLE_RAW)
 	&protocol_abs_client_raw_skt,
 #endif
 	NULL
 };
+#endif
 
 static const char * const mount_protocols[] = {
 	"http://",
@@ -366,8 +368,10 @@ lws_protocol_init(struct lws_context *context)
 			if (vh->protocols[n].callback(&wsi,
 					LWS_CALLBACK_PROTOCOL_INIT, NULL,
 					(void *)pvo, 0)) {
-				lws_free(vh->protocol_vh_privs[n]);
-				vh->protocol_vh_privs[n] = NULL;
+				if (vh->protocol_vh_privs[n]) {
+					lws_free(vh->protocol_vh_privs[n]);
+					vh->protocol_vh_privs[n] = NULL;
+				}
 				lwsl_err("%s: protocol %s failed init\n",
 					 __func__, vh->protocols[n].name);
 
@@ -431,7 +435,7 @@ lws_create_vhost(struct lws_context *context,
 	struct lws_plugin *plugin = context->plugin_list;
 #endif
 	struct lws_protocols *lwsp;
-	int m, f = !info->pvo, fx = 0, abs_pcol_count;
+	int m, f = !info->pvo, fx = 0, abs_pcol_count = 0;
 	char buf[20];
 #if !defined(LWS_WITHOUT_CLIENT) && defined(LWS_HAVE_GETENV)
 	char *p;
@@ -544,8 +548,9 @@ lws_create_vhost(struct lws_context *context,
 #if defined(LWS_WITH_HTTP_PROXY) && defined(LWS_ROLE_WS)
 	fx = 1;
 #endif
-
+#if defined(LWS_WITH_ABSTRACT)
 	abs_pcol_count = (int)LWS_ARRAY_SIZE(available_abstract_protocols) - 1;
+#endif
 
 	/*
 	 * give the vhost a unified list of protocols including:
@@ -579,12 +584,13 @@ lws_create_vhost(struct lws_context *context,
 	/*
 	 * 2: abstract protocols
 	 */
-
+#if defined(LWS_WITH_ABSTRACT)
 	for (n = 0; n < abs_pcol_count; n++) {
 		memcpy(&lwsp[m++], available_abstract_protocols[n],
 		       sizeof(*lwsp));
 		vh->count_protocols++;
 	}
+#endif
 
 	/*
 	 * 3: For compatibility, all protocols enabled on vhost if only
@@ -688,7 +694,7 @@ lws_create_vhost(struct lws_context *context,
 	{
 #ifdef LWS_HAVE_GETENV
 		p = getenv("http_proxy");
-		if (p)
+		if (p && strlen(p) > 0 && strlen(p) < 95)
 			lws_set_proxy(vh, p);
 #endif
 	}
@@ -703,7 +709,7 @@ lws_create_vhost(struct lws_context *context,
 	} else {
 #ifdef LWS_HAVE_GETENV
 		p = getenv("socks_proxy");
-		if (p)
+		if (p && strlen(p) > 0 && strlen(p) < 95)
 			lws_set_socks(vh, p);
 #endif
 	}
@@ -970,6 +976,18 @@ out:
 	lws_context_unlock(context); /* --------------------------- context { */
 }
 
+#if defined(LWS_WITH_ABSTRACT)
+static int
+destroy_ais(struct lws_dll2 *d, void *user)
+{
+	lws_abs_t *ai = lws_container_of(d, lws_abs_t, abstract_instances);
+
+	lws_abs_destroy_instance(&ai);
+
+	return 0;
+}
+#endif
+
 void
 __lws_vhost_destroy2(struct lws_vhost *vh)
 {
@@ -1109,6 +1127,14 @@ __lws_vhost_destroy2(struct lws_vhost *vh)
 
 	if (vh->finalize)
 		vh->finalize(vh, vh->finalize_arg);
+
+#if defined(LWS_WITH_ABSTRACT)
+	/*
+	 * abstract instances
+	 */
+
+	lws_dll2_foreach_safe(&vh->abstract_instances_owner, NULL, destroy_ais);
+#endif
 
 	lwsl_info("  %s: Freeing vhost %p\n", __func__, vh);
 

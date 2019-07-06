@@ -73,6 +73,7 @@ option(LWS_STATIC_PIC "Build the static version of the library with position-ind
 # Specific platforms
 #
 option(LWS_WITH_ESP32 "Build for ESP32" OFF)
+option(LWS_WITH_ESP32_HELPER "Build ESP32 helper" OFF)
 option(LWS_PLAT_OPTEE "Build for OPTEE" OFF)
 #
 # Client / Server / Test Apps build control
@@ -88,8 +89,6 @@ option(LWS_WITHOUT_TEST_CLIENT "Don't build the client test application" OFF)
 # Extensions (permessage-deflate)
 #
 option(LWS_WITHOUT_EXTENSIONS "Don't compile with extensions" ON)
-option(LWS_WITH_ZLIB "Include zlib support (required for extensions)" OFF)
-option(LWS_WITH_BUNDLED_ZLIB "Use bundled zlib version (Windows only)" ${LWS_WITH_BUNDLED_ZLIB_DEFAULT})
 #
 # Helpers + misc
 #
@@ -125,9 +124,37 @@ option(LWS_WITH_LWSAC "lwsac Chunk Allocation api" ON)
 option(LWS_WITH_CUSTOM_HEADERS "Store and allow querying custom HTTP headers (H1 only)" ON)
 option(LWS_WITH_DISKCACHE "Hashed cache directory with lazy LRU deletion to size limit" OFF)
 option(LWS_WITH_ASAN "Build with gcc runtime sanitizer options enabled (needs libasan)" OFF)
+option(LWS_WITH_DIR "Directory scanning api support" OFF)
+option(LWS_WITH_LEJP_CONF "With LEJP configuration parser as used by lwsws" OFF)
+option(LWS_WITH_ZLIB "Include zlib support (required for extensions)" OFF)
+option(LWS_WITH_BUNDLED_ZLIB "Use bundled zlib version (Windows only)" ${LWS_WITH_BUNDLED_ZLIB_DEFAULT})
+option(LWS_WITH_MINIZ "Use miniz instead of zlib" OFF)
+#
+# to use miniz, enable both LWS_WITH_ZLIB and LWS_WITH_MINIZ
 #
 # End of user settings
 #
+
+# Workaround for ESP-IDF
+# Detect ESP_PLATFORM environment flag, if exist, set LWS_WITH_ESP32.
+# Otherwise the user may not be able to run configuration ESP-IDF in the first time.
+if(ESP_PLATFORM)
+	message(STATUS "ESP-IDF enabled")
+	set(LWS_WITH_ESP32 ON)
+else()
+	set(LWS_WITH_ESP32_HELPER OFF)
+endif()
+
+if (WIN32 OR LWS_WITH_ESP32)
+	message(STATUS "No LWS_WITH_DIR and LWS_WITH_DIR")
+	set(LWS_WITH_DIR OFF)
+	set(LWS_WITH_LEJP_CONF OFF)
+	message("LWS_WITH_DIR ${LWS_WITH_DIR}")
+else()
+	message(STATUS "Compiled with LWS_WITH_DIR and LWS_WITH_DIR")
+	set(LWS_WITH_DIR ON)
+	set(LWS_WITH_LEJP_CONF ON)
+endif()
 
 if (LWS_FOR_GITOHASHI)
 	set(LWS_WITH_THREADPOOL 1)
@@ -307,7 +334,6 @@ endif()
 
 include_directories(include plugins)
 
-
 if (LWS_WITH_LWSWS)
  message(STATUS "LWS_WITH_LWSWS --> Enabling LWS_WITH_PLUGINS and LWS_WITH_LIBUV")
  set(LWS_WITH_PLUGINS 1)
@@ -354,6 +380,7 @@ endif()
 if (LWS_WITH_GENERIC_SESSIONS)
  set(LWS_WITH_SQLITE3 1)
  set(LWS_WITH_SMTP 1)
+ set(LWS_WITH_STRUCT_SQLITE3 1)
 endif()
 
 if (LWS_WITH_ESP32)
@@ -450,8 +477,11 @@ if (NOT LWS_WITHOUT_EXTENSIONS OR LWS_WITH_ZIP_FOPS)
 	set(LWS_WITH_ZLIB 1)
 endif()
 
-set(LWS_ZLIB_LIBRARIES CACHE PATH "Path to the zlib library")
-set(LWS_ZLIB_INCLUDE_DIRS CACHE PATH "Path to the zlib include directory")
+# if you gave LWS_WITH_MINIZ, point to MINIZ here if not found
+# automatically
+
+set(LWS_ZLIB_LIBRARIES CACHE PATH "Path to the zlib/miniz library")
+set(LWS_ZLIB_INCLUDE_DIRS CACHE PATH "Path to the zlib/miniz include directory")
 set(LWS_OPENSSL_LIBRARIES CACHE PATH "Path to the OpenSSL library")
 set(LWS_OPENSSL_INCLUDE_DIRS CACHE PATH "Path to the OpenSSL include directory")
 set(LWS_WOLFSSL_LIBRARIES CACHE PATH "Path to the wolfSSL library")
@@ -655,6 +685,13 @@ if ("${LWS_MAX_SMP}" STREQUAL "")
 	set(LWS_MAX_SMP 1)
 endif()
 
+# using any abstract protocol enables LWS_WITH_ABSTRACT
+
+if (LWS_WITH_SMTP)
+	set(LWS_WITH_ABSTRACT 1)
+endif()
+
+
 
 if (MINGW)
 	set(LWS_MINGW_SUPPORT 1)
@@ -821,7 +858,11 @@ endif()
 
 
 if (LWS_WITH_ZLIB AND NOT LWS_WITH_BUNDLED_ZLIB)
-	CHECK_INCLUDE_FILE(zlib.h LWS_HAVE_ZLIB_H)
+	if (LWS_WITH_MINIZ)
+		CHECK_INCLUDE_FILE(miniz.h LWS_HAVE_ZLIB_H)
+	else()
+		CHECK_INCLUDE_FILE(zlib.h LWS_HAVE_ZLIB_H)
+	endif()
 endif()
 
 # TODO: These can also be tested to see whether they actually work...
@@ -909,14 +950,20 @@ if (LWS_WITH_NETWORK)
 		lib/core-net/network.c
 		lib/core-net/vhost.c
 		lib/core-net/pollfd.c
+		lib/core-net/sequencer.c
 		lib/core-net/service.c
 		lib/core-net/stats.c
 		lib/core-net/wsi.c
 		lib/core-net/wsi-timeout.c
 		lib/core-net/adopt.c
 		lib/roles/pipe/ops-pipe.c
-		lib/abstract/abstract.c
 	)
+	if (LWS_WITH_ABSTRACT)
+		list(APPEND SOURCES
+			lib/abstract/abstract.c
+			lib/abstract/test-sequencer.c
+		)
+	endif()
 	
 	if (LWS_WITH_STATS)
 		list(APPEND SOURCES
@@ -969,9 +1016,13 @@ endif()
 
 if (LWS_ROLE_RAW)
 	list(APPEND SOURCES
-		lib/abstract/transports/raw-skt.c
 		lib/roles/raw-skt/ops-raw-skt.c
 		lib/roles/raw-file/ops-raw-file.c)
+		
+	if (LWS_WITH_ABSTRACT)
+		list(APPEND SOURCES
+			lib/abstract/transports/raw-skt.c)
+	endif()
 endif()
 
 if (LWS_ROLE_RAW_PROXY)
@@ -1202,13 +1253,15 @@ else()
 			list(APPEND SOURCES
 				lib/plat/esp32/esp32-fds.c
 				lib/plat/esp32/esp32-file.c
-				lib/plat/esp32/esp32-helpers.c
 				lib/plat/esp32/esp32-init.c
 				lib/plat/esp32/esp32-misc.c
 				lib/plat/esp32/esp32-pipe.c
 				lib/plat/esp32/esp32-service.c
 				lib/plat/esp32/esp32-sockets.c
 				lib/misc/romfs.c)
+			if(LWS_WITH_ESP32_HELPER)
+				list(APPEND SOURCES lib/plat/esp32/esp32-helpers.c)
+			endif()
 		else()
 			list(APPEND SOURCES
 				lib/plat/unix/unix-caps.c
@@ -1281,9 +1334,14 @@ if (LWS_WITH_LEJP_CONF AND LWS_WITH_NETWORK AND NOT LWS_PLAT_OPTEE)
 		)
 endif()
 
+if (LWS_WITH_ABSTRACT)
+	list(APPEND SOURCES
+		lib/abstract/transports/unit-test.c)
+endif()
+
 if (LWS_WITH_SMTP)
 	list(APPEND SOURCES
-		lib/abstract/smtp/smtp.c)
+		lib/abstract/protocols/smtp/smtp.c)
 endif()
 
 if (LWS_WITH_RANGES)
@@ -1350,7 +1408,11 @@ if (UNIX)
 	endif()
 endif()
 
-if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX OR (CMAKE_C_COMPILER_ID MATCHES "Clang") OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+if ((CMAKE_C_COMPILER_ID MATCHES "Clang") OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+	set(COMPILER_IS_CLANG ON)
+endif()
+
+if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX OR COMPILER_IS_CLANG)
     include (CheckCCompilerFlag)
     CHECK_C_COMPILER_FLAG(-fvisibility=hidden LWS_HAVE_VISIBILITY)
     if (LWS_HAVE_VISIBILITY)
@@ -1361,7 +1423,10 @@ if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX OR (CMAKE_C_COMPILER_ID 
     endif()
 
 	if (LWS_WITH_ASAN)
-		set (ASAN_FLAGS "-fsanitize=address -fsanitize=pointer-compare -fsanitize=pointer-subtract -fsanitize=leak -fsanitize=undefined -fsanitize-address-use-after-scope -fsanitize-undefined-trap-on-error")
+		set (ASAN_FLAGS "-fsanitize=address -fsanitize=undefined -fsanitize-address-use-after-scope -fsanitize-undefined-trap-on-error")
+		if (NOT COMPILER_IS_CLANG)
+			set (ASAN_FLAGS "${ASAN_FLAGS} -fsanitize=pointer-compare -fsanitize=pointer-subtract -fsanitize=leak")
+		endif()
 		message("Enabling ASAN")
 	endif()
 
@@ -1395,7 +1460,7 @@ if ((CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX) AND NOT LWS_WITHOUT_TE
     endif()
 endif()
 
-if ((CMAKE_C_COMPILER_ID MATCHES "Clang") OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+if (COMPILER_IS_CLANG)
 
 	# otherwise osx blows a bunch of openssl deprecated api errors
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-deprecated-declarations" )
@@ -1501,7 +1566,7 @@ endif()
 
 # Set the so version of the lib.
 # Equivalent to LDFLAGS=-version-info x:x:x
-if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX OR (CMAKE_C_COMPILER_ID MATCHES "Clang") OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX OR COMPILER_IS_CLANG)
 	foreach(lib ${LWS_LIBRARIES})
 		set_target_properties(${lib}
 			PROPERTIES
@@ -1549,10 +1614,16 @@ if (LWS_WITH_ZLIB)
 			message(FATAL_ERROR "Don't have bundled zlib for that platform")
 		endif()
 	elseif (NOT ZLIB_FOUND)
-		find_package(ZLIB REQUIRED)
+		if (LWS_WITH_MINIZ)
+			find_package(Miniz REQUIRED)
+			set(ZLIB_INCLUDE_DIRS ${MINIZ_INCLUDE_DIRS})
+			set(ZLIB_LIBRARIES ${MINIZ_LIBRARIES})
+		else()
+			find_package(ZLIB REQUIRED)
+		endif()
 	endif()
-	message("zlib include dirs: ${ZLIB_INCLUDE_DIRS}")
-	message("zlib libraries: ${ZLIB_LIBRARIES}")
+	message("zlib/miniz include dirs: ${ZLIB_INCLUDE_DIRS}")
+	message("zlib/miniz libraries: ${ZLIB_LIBRARIES}")
 	include_directories(${ZLIB_INCLUDE_DIRS})
 	list(APPEND LIB_LIST ${ZLIB_LIBRARIES})
 endif()
@@ -2594,6 +2665,7 @@ message(" LWS_HAVE__ATOI64 = ${LWS_HAVE__ATOI64}")
 message(" LWS_HAVE_STAT32I64 = ${LWS_HAVE_STAT32I64}")
 message(" LWS_HAS_INTPTR_T = ${LWS_HAS_INTPTR_T}")
 message(" LWS_WITH_EXPORT_LWSTARGETS = ${LWS_WITH_EXPORT_LWSTARGETS}")
+message(" LWS_WITH_ABSTRACT = ${LWS_WITH_ABSTRACT}")
 
 message("---------------------------------------------------------------------")
 
