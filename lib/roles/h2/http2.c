@@ -490,7 +490,7 @@ lws_h2_settings(struct lws *wsi, struct http2_settings *settings,
 					      "Frame size < initial");
 				return 1;
 			}
-			if (b > 0x007fffff) {
+			if (b > 0x00ffffff) {
 				lws_h2_goaway(nwsi, H2_ERR_PROTOCOL_ERROR,
 					      "Settings Frame size above max");
 				return 1;
@@ -1583,6 +1583,12 @@ lws_h2_parse_end_of_frame(struct lws *wsi)
 					      "alien sid");
 			break; /* ignore */
 		}
+
+		if (eff_wsi->vhost->options &
+		        LWS_SERVER_OPTION_H2_JUST_FIX_WINDOW_UPDATE_OVERFLOW &&
+		    (uint64_t)eff_wsi->h2.tx_cr + (uint64_t)h2n->hpack_e_dep >
+		    (uint64_t)0x7fffffff)
+			h2n->hpack_e_dep = 0x7fffffff - eff_wsi->h2.tx_cr;
 
 		if ((uint64_t)eff_wsi->h2.tx_cr + (uint64_t)h2n->hpack_e_dep >
 		    (uint64_t)0x7fffffff) {
