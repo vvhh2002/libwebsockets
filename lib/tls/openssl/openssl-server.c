@@ -302,9 +302,14 @@ lws_tls_server_certs_load(struct lws_vhost *vhost, struct lws *wsi,
 		 * memory-buffer private key image is PEM.
 		 */
 #ifndef USE_WOLFSSL
+		if (lws_tls_alloc_pem_to_der_file(vhost->context, cert, mem_cert,
+						  mem_cert_len, &p, &flen)) {
+			lwsl_err("%s: couldn't convert pem to der\n", __func__);
+			return 1;
+		}
 		if (SSL_CTX_use_certificate_ASN1(vhost->tls.ssl_ctx,
-						 (int)mem_cert_len,
-						 (uint8_t *)mem_cert) != 1) {
+						 (int)flen,
+						 (uint8_t *)p) != 1) {
 #else
 		if (wolfSSL_CTX_use_certificate_buffer(vhost->tls.ssl_ctx,
 						 (uint8_t *)mem_cert,
@@ -552,6 +557,7 @@ lws_tls_server_new_nonblocking(struct lws *wsi, lws_sockfd_type accept_fd)
 #endif
 
 	errno = 0;
+	ERR_clear_error();
 	wsi->tls.ssl = SSL_new(wsi->vhost->tls.ssl_ctx);
 	if (wsi->tls.ssl == NULL) {
 		lwsl_err("SSL_new failed: %d (errno %d)\n",
@@ -606,9 +612,13 @@ lws_tls_server_abort_connection(struct lws *wsi)
 enum lws_ssl_capable_status
 lws_tls_server_accept(struct lws *wsi)
 {
-	union lws_tls_cert_info_results ir;
-	int m, n = SSL_accept(wsi->tls.ssl);
 	struct lws_context_per_thread *pt = &wsi->context->pt[(int)wsi->tsi];
+	union lws_tls_cert_info_results ir;
+	int m, n;
+
+	errno = 0;
+	ERR_clear_error();
+	n = SSL_accept(wsi->tls.ssl);
 
 	if (n == 1) {
 		n = lws_tls_peer_cert_info(wsi, LWS_TLS_CERT_INFO_COMMON_NAME, &ir,
