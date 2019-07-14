@@ -342,7 +342,7 @@ just_kill_connection:
 	if (!wsi->told_user_closed && wsi->user_space &&
 	    wsi->protocol_bind_balance && wsi->protocol) {
 		lwsl_debug("%s: %p: DROP_PROTOCOL %s\n", __func__, wsi,
-		       wsi->protocol->name);
+			   wsi->protocol ? wsi->protocol->name: "NULL");
 		wsi->protocol->callback(wsi,
 				wsi->role_ops->protocol_unbind_cb[
 				       !!lwsi_role_server(wsi)],
@@ -373,17 +373,17 @@ just_kill_connection:
 	    !wsi->socket_is_permanently_unusable) {
 
 #if defined(LWS_WITH_TLS)
-	if (lws_is_ssl(wsi) && wsi->tls.ssl) {
-		n = 0;
-		switch (__lws_tls_shutdown(wsi)) {
-		case LWS_SSL_CAPABLE_DONE:
-		case LWS_SSL_CAPABLE_ERROR:
-		case LWS_SSL_CAPABLE_MORE_SERVICE_READ:
-		case LWS_SSL_CAPABLE_MORE_SERVICE_WRITE:
-		case LWS_SSL_CAPABLE_MORE_SERVICE:
-			break;
-		}
-	} else
+		if (lws_is_ssl(wsi) && wsi->tls.ssl) {
+			n = 0;
+			switch (__lws_tls_shutdown(wsi)) {
+			case LWS_SSL_CAPABLE_DONE:
+			case LWS_SSL_CAPABLE_ERROR:
+			case LWS_SSL_CAPABLE_MORE_SERVICE_READ:
+			case LWS_SSL_CAPABLE_MORE_SERVICE_WRITE:
+			case LWS_SSL_CAPABLE_MORE_SERVICE:
+				break;
+			}
+		} else
 #endif
 		{
 			lwsl_info("%s: shutdown conn: %p (sk %d, state 0x%x)\n",
@@ -466,7 +466,7 @@ just_kill_connection:
 	    wsi->role_ops->close_cb[lwsi_role_server(wsi)]) {
 		const struct lws_protocols *pro = wsi->protocol;
 
-		if (!wsi->protocol)
+		if (!wsi->protocol && wsi->vhost && wsi->vhost->protocols)
 			pro = &wsi->vhost->protocols[0];
 
 		if (!wsi->upgraded_to_http2 || !lwsi_role_client(wsi))

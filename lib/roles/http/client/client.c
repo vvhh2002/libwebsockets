@@ -1133,8 +1133,10 @@ lws_generate_client_handshake(struct lws *wsi, char *pkt)
 		p = lws_generate_client_ws_handshake(wsi, p, conn1);
 	} else
 #endif
+	{
 		if (!wsi->client_pipeline)
 			p += snprintf(p, 64, "connection: close\x0d\x0a");
+	}
 
 	/* give userland a chance to append, eg, cookies */
 
@@ -1164,7 +1166,8 @@ lws_http_client_read(struct lws *wsi, char **buf, int *len)
 	// lwsl_notice("%s: rlen %d\n", __func__, rlen);
 
 	/* allow the source to signal he has data again next time */
-	lws_change_pollfd(wsi, 0, LWS_POLLIN);
+	if (lws_change_pollfd(wsi, 0, LWS_POLLIN))
+		return -1;
 
 	if (rlen == LWS_SSL_CAPABLE_ERROR) {
 		lwsl_debug("%s: SSL capable error\n", __func__);

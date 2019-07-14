@@ -146,8 +146,9 @@ lws_genrsa_new_keypair(struct lws_context *context, struct lws_genrsa_ctx *ctx,
 				if (!el[n].buf)
 					goto cleanup;
 				el[n].len = mbedtls_mpi_size(mpi[n]);
-				mbedtls_mpi_write_binary(mpi[n], el[n].buf,
-							 el[n].len);
+				if (mbedtls_mpi_write_binary(mpi[n], el[n].buf,
+							 el[n].len))
+					goto cleanup;
 			}
 	}
 
@@ -441,10 +442,12 @@ lws_genrsa_render_pkey_asn1(struct lws_genrsa_ctx *ctx, int _private,
 		if (p + m > end)
 			return -1;
 
-		mbedtls_mpi_write_binary(mpi[n], p, m);
+		if (mbedtls_mpi_write_binary(mpi[n], p, m))
+			return -1;
 		if (p[0] & 0x80) {
 			p[0] = 0x00;
-			mbedtls_mpi_write_binary(mpi[n], &p[1], m);
+			if (mbedtls_mpi_write_binary(mpi[n], &p[1], m))
+				return -1;
 			m++;
 		}
 		if (m < 0x7f)

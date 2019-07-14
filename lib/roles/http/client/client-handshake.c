@@ -349,10 +349,12 @@ create_new_conn:
 	if (!wsi->cli_hostname_copy) {
 		if (wsi->stash)
 			wsi->cli_hostname_copy = lws_strdup(wsi->stash->host);
-		else
-			wsi->cli_hostname_copy =
-				lws_strdup(lws_hdr_simple_ptr(wsi,
-					_WSI_TOKEN_CLIENT_PEER_ADDRESS));
+		else {
+			char *pa = lws_hdr_simple_ptr(wsi,
+					      _WSI_TOKEN_CLIENT_PEER_ADDRESS);
+			if (pa)
+				wsi->cli_hostname_copy = lws_strdup(pa);
+		}
 	}
 
 	/*
@@ -635,7 +637,11 @@ ads_known:
 			goto oom4;
 		}
 
-		lws_change_pollfd(wsi, 0, LWS_POLLIN);
+		if (lws_change_pollfd(wsi, 0, LWS_POLLIN)) {
+			compatible_close(wsi->desc.sockfd);
+			cce = "change_pollfd failed";
+			goto oom4;
+		}
 
 		/*
 		 * past here, we can't simply free the structs as error
@@ -787,7 +793,12 @@ lws_client_reset(struct lws **pwsi, int ssl, const char *address, int port,
 {
 	char origin[300] = "", protocol[300] = "", method[32] = "",
 	     iface[16] = "", alpn[32] = "", *p;
-	struct lws *wsi = *pwsi;
+	struct lws *wsi;
+
+	if (!pwsi)
+		return NULL;
+
+	wsi = *pwsi;
 
 	if (wsi->redirects == 3) {
 		lwsl_err("%s: Too many redirects\n", __func__);

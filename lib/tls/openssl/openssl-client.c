@@ -160,7 +160,7 @@ lws_ssl_client_bio_create(struct lws *wsi)
 	if (!wsi->tls.ssl) {
 		lwsl_err("SSL_new failed: %s\n",
 		         ERR_error_string(lws_ssl_get_error(wsi, 0), NULL));
-		lws_tls_err_describe();
+		lws_tls_err_describe_clear();
 		return -1;
 	}
 
@@ -279,8 +279,11 @@ lws_tls_client_connect(struct lws *wsi)
 	char a[32];
 	unsigned int len;
 #endif
-	int m, n = SSL_connect(wsi->tls.ssl);
+	int m, n;
 
+	errno = 0;
+	ERR_clear_error();
+	n = SSL_connect(wsi->tls.ssl);
 	if (n == 1) {
 #if defined(LWS_HAVE_SSL_set_alpn_protos) && \
     defined(LWS_HAVE_SSL_get0_alpn_selected)
@@ -325,6 +328,8 @@ lws_tls_client_confirm_peer_cert(struct lws *wsi, char *ebuf, int ebuf_len)
 	int n;
 
 	lws_latency_pre(wsi->context, wsi);
+	errno = 0;
+	ERR_clear_error();
 	n = SSL_get_verify_result(wsi->tls.ssl);
 	lws_latency(wsi->context, wsi,
 		"SSL_get_verify_result LWS_CONNMODE..HANDSHAKE", n, n > 0);
@@ -356,7 +361,7 @@ lws_tls_client_confirm_peer_cert(struct lws *wsi, char *ebuf, int ebuf_len)
 		"server's cert didn't look good, X509_V_ERR = %d: %s\n",
 		 n, ERR_error_string(n, sb));
 	lwsl_info("%s\n", ebuf);
-	lws_tls_err_describe();
+	lws_tls_err_describe_clear();
 
 	return -1;
 
@@ -496,6 +501,8 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 
 	/* no existing one the same... create new client SSL_CTX */
 
+	errno = 0;
+	ERR_clear_error();
 	vh->tls.ssl_client_ctx = SSL_CTX_new(method);
 	if (!vh->tls.ssl_client_ctx) {
 		error = ERR_get_error();
@@ -578,7 +585,7 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 				"Unable to load SSL Client certs "
 				"file from %s -- client ssl isn't "
 				"going to work\n", ca_filepath);
-			lws_tls_err_describe();
+			lws_tls_err_describe_clear();
 		}
 		else
 			lwsl_info("loaded ssl_ca_filepath\n");
@@ -591,7 +598,7 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 			lwsl_err("Unable to load SSL Client certs from "
 				 "ssl_ca_mem -- client ssl isn't going to "
 				 "work\n");
-			lws_tls_err_describe();
+			lws_tls_err_describe_clear();
 		} else {
 			/* it doesn't increment x509_store ref counter */
 			SSL_CTX_set_cert_store(vh->tls.ssl_client_ctx,
@@ -621,7 +628,7 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 		if (n < 1) {
 			lwsl_err("problem %d getting cert '%s'\n", n,
 				 cert_filepath);
-			lws_tls_err_describe();
+			lws_tls_err_describe_clear();
 			return 1;
 		}
 		lwsl_notice("Loaded client cert %s\n", cert_filepath);
@@ -631,7 +638,7 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 		if (n < 1) {
 			lwsl_err("%s: problem interpreting client cert\n",
 				 __func__);
-			lws_tls_err_describe();
+			lws_tls_err_describe_clear();
 			return 1;
 		}
 	}
@@ -643,7 +650,7 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 		    private_key_filepath, SSL_FILETYPE_PEM) != 1) {
 			lwsl_err("use_PrivateKey_file '%s'\n",
 				 private_key_filepath);
-			lws_tls_err_describe();
+			lws_tls_err_describe_clear();
 			return 1;
 		}
 		lwsl_notice("Loaded client cert private key %s\n",
