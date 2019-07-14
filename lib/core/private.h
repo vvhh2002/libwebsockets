@@ -36,16 +36,6 @@
  #define  _GNU_SOURCE
 #endif
 
-#if defined(__COVERITY__) && !defined(LWS_COVERITY_WORKAROUND)
- #define LWS_COVERITY_WORKAROUND
- typedef float _Float32;
- typedef float _Float64;
- typedef float _Float128;
- typedef float _Float32x;
- typedef float _Float64x;
- typedef float _Float128x;
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1223,7 +1213,7 @@ lws_hdr_simple_create(struct lws *wsi, enum lws_token_indexes h, const char *s);
 LWS_EXTERN int LWS_WARN_UNUSED_RESULT
 lws_ensure_user_space(struct lws *wsi);
 
-LWS_EXTERN int
+LWS_EXTERN int LWS_WARN_UNUSED_RESULT
 lws_change_pollfd(struct lws *wsi, int _and, int _or);
 
 #ifndef LWS_NO_SERVER
