@@ -826,6 +826,9 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 		}
 #endif
 
+		if (!ads) /* make coverity happy */
+			goto bail3;
+
 		if (!lws_client_reset(&wsi, ssl, ads, port, path, ads)) {
 			/* there are two ways to fail out with NULL return...
 			 * simple, early problem where the wsi is intact, or
@@ -1128,8 +1131,8 @@ lws_generate_client_handshake(struct lws *wsi, char *pkt)
 #if defined(LWS_ROLE_WS)
 	if (wsi->do_ws) {
 		const char *conn1 = "";
-		if (!wsi->client_pipeline)
-			conn1 = "close, ";
+	//	if (!wsi->client_pipeline)
+	//		conn1 = "close, ";
 		p = lws_generate_client_ws_handshake(wsi, p, conn1);
 	} else
 #endif
