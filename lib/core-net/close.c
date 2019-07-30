@@ -352,12 +352,11 @@ just_kill_connection:
 
 	if ((lwsi_state(wsi) == LRS_WAITING_SERVER_REPLY ||
 	     lwsi_state(wsi) == LRS_WAITING_CONNECT) &&
-	     !wsi->already_did_cce && wsi->protocol) {
-		lwsl_err("xxx: 0x%x\n", lwsi_state(wsi));
+	     !wsi->already_did_cce && wsi->protocol)
 		wsi->protocol->callback(wsi,
 				        LWS_CALLBACK_CLIENT_CONNECTION_ERROR,
-						wsi->user_space, NULL, 0);
-	}
+					wsi->user_space,
+					(void *)"closed before established", 24);
 
 	/*
 	 * Testing with ab shows that we have to stage the socket close when
