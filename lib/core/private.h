@@ -43,7 +43,11 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
+
+#ifdef LWS_HAVE_INTTYPES_H
 #include <inttypes.h>
+#endif
+
 #include <assert.h>
 
 #ifdef LWS_HAVE_SYS_TYPES_H
