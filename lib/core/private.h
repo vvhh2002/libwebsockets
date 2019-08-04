@@ -40,7 +40,11 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
+
+#ifdef LWS_HAVE_INTTYPES_H
 #include <inttypes.h>
+#endif
+
 #include <assert.h>
 
 #ifdef LWS_HAVE_SYS_TYPES_H
@@ -486,6 +490,7 @@ LWS_EXTERN void lwsl_emit_stderr(int level, const char *line);
  #define lws_ssl_remove_wsi_from_buffered_list(_a)
  #define __lws_ssl_remove_wsi_from_buffered_list(_a)
  #define lws_context_init_ssl_library(_a)
+ #define lws_context_deinit_ssl_library(_a)
  #define lws_tls_check_all_cert_lifetimes(_a)
  #define lws_tls_acme_sni_cert_destroy(_a)
 #endif
