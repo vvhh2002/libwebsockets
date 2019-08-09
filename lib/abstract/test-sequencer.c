@@ -21,7 +21,7 @@
  *
  * A helper for running multiple unit tests against abstract protocols.
  *
- * An lws_sequencer_t is used to base its actions in the event loop and manage
+ * An lws_seq_t is used to base its actions in the event loop and manage
  * the sequencing of multiple tests.  A new abstract connection is instantiated
  * for each test using te
  */
@@ -35,7 +35,7 @@ struct lws_seq_test_sequencer {
 
 	struct lws_context		*context;
 	struct lws_vhost		*vhost;
-	lws_sequencer_t			*unit_test_seq;
+	lws_seq_t			*unit_test_seq;
 
 	/* holds the per-test token for the unit-test transport to consume */
 	lws_token_map_t			uttt[4];
@@ -88,7 +88,7 @@ unit_test_result_cb(const void *cb_user, int disposition)
 		return -1;
 	}
 
-	lws_sequencer_event(s->unit_test_seq, r, NULL);
+	lws_seq_queue_event(s->unit_test_seq, r, NULL, NULL);
 
 	((struct lws_seq_test_sequencer *)s)->instance = NULL;
 
@@ -103,7 +103,8 @@ unit_test_result_cb(const void *cb_user, int disposition)
  */
 
 static lws_seq_cb_return_t
-test_sequencer_cb(struct lws_sequencer *seq, void *user, int event, void *data)
+test_sequencer_cb(struct lws_sequencer *seq, void *user, int event, void *data,
+		  void *aux)
 {
 	struct lws_seq_test_sequencer *s =
 				(struct lws_seq_test_sequencer *)user;
@@ -114,7 +115,7 @@ test_sequencer_cb(struct lws_sequencer *seq, void *user, int event, void *data)
 	switch ((int)event) {
 	case LWSSEQ_CREATED: /* our sequencer just got started */
 		lwsl_notice("%s: %s: created\n", __func__,
-			    lws_sequencer_name(seq));
+			    lws_seq_name(seq));
 		s->state = 0;  /* first thing we'll do is the first url */
 		goto step;
 
@@ -177,7 +178,7 @@ pass:
 		s->args.results[s->state] = LPE_SUCCEEDED;
 
 done:
-		lws_sequencer_timeout(lws_sequencer_from_user(s), 0);
+		lws_seq_timeout_us(lws_seq_from_user(s), LWSSEQTO_NONE);
 		s->state++;
 step:
 		if (!s->args.tests[s->state].name) {
@@ -232,15 +233,21 @@ int
 lws_abs_unit_test_sequencer(const lws_test_sequencer_args_t *args)
 {
 	struct lws_seq_test_sequencer *s;
-	lws_sequencer_t *seq;
+	lws_seq_t *seq;
+	lws_seq_info_t i;
+
+	memset(&i, 0, sizeof(i));
+	i.context = args->abs->vh->context;
+	i.user_size = sizeof(struct lws_seq_test_sequencer);
+	i.puser = (void **)&s;
+	i.cb = test_sequencer_cb;
+	i.name = "test-seq";
 
 	/*
 	 * Create a sequencer in the event loop to manage the tests
 	 */
 
-	seq = lws_sequencer_create(args->abs->vh->context, 0,
-				   sizeof(struct lws_seq_test_sequencer),
-				   (void **)&s, test_sequencer_cb, "test-seq");
+	seq = lws_seq_create(&i);
 	if (!seq) {
 		lwsl_err("%s: unable to create sequencer\n", __func__);
 		return 1;

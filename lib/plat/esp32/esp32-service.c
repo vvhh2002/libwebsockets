@@ -38,6 +38,7 @@ lws_plat_service(struct lws_context *context, int timeout_ms)
 LWS_EXTERN int
 _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 {
+	lws_usec_t timeout_us = timeout_ms * LWS_US_PER_MS;
 	struct lws_context_per_thread *pt;
 	int n = -1, m, c;
 
@@ -101,24 +102,26 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		/* still somebody left who wants forced service? */
 		if (!lws_service_adjust_timeout(context, 1, pt->tid))
 			/* yes... come back again quickly */
-			timeout_ms = 0;
+			timeout_us = 0;
 	}
 
-	if (timeout_ms) {
+	if (timeout_us) {
+		lws_usec_t us;
+
 		lws_pt_lock(pt, __func__);
 		/* don't stay in poll wait longer than next hr timeout */
-		lws_usec_t t =  __lws_hrtimer_service(pt);
+		us = __lws_sul_check(&pt->pt_sul_owner, lws_now_usecs());
+		if (us && us < timeout_us)
+			timeout_us = us;
 
-		if ((lws_usec_t)timeout_ms * 1000 > t)
-			timeout_ms = t / 1000;
 		lws_pt_unlock(pt);
 	}
 
 //	n = poll(pt->fds, pt->fds_count, timeout_ms);
 	{
 		fd_set readfds, writefds, errfds;
-		struct timeval tv = { timeout_ms / 1000,
-				      (timeout_ms % 1000) * 1000 }, *ptv = &tv;
+		struct timeval tv = { timeout_us / LWS_US_PER_SEC,
+				      timeout_us % LWS_US_PER_SEC }, *ptv = &tv;
 		int max_fd = 0;
 		FD_ZERO(&readfds);
 		FD_ZERO(&writefds);
@@ -203,10 +206,3 @@ faked_service:
 
 	return 0;
 }
-
-
-void
-lws_plat_service_periodic(struct lws_context *context)
-{
-}
-

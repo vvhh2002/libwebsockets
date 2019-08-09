@@ -42,6 +42,13 @@ extern "C" {
  * CARE: everything using cmake defines needs to be below here
  */
 
+#define LWS_US_PER_SEC 1000000
+#define LWS_MS_PER_SEC 1000
+#define LWS_US_PER_MS 1000
+#define LWS_NS_PER_US 1000
+
+#define LWS_US_TO_MS(x) ((x + (LWS_US_PER_MS / 2)) / LWS_US_PER_MS)
+
 #if defined(LWS_HAS_INTPTR_T)
 #include <stdint.h>
 #define lws_intptr_t intptr_t
@@ -225,6 +232,8 @@ typedef unsigned long long lws_intptr_t;
 #endif
 #endif
 #include <mbedtls/ssl.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
 #else
 #include <openssl/ssl.h>
 #if !defined(LWS_WITH_MBEDTLS)
@@ -513,13 +522,13 @@ struct lws;
 #include <libwebsockets/lws-http.h>
 #include <libwebsockets/lws-spa.h>
 #include <libwebsockets/lws-purify.h>
+#include <libwebsockets/lws-misc.h>
 #include <libwebsockets/lws-timeout-timer.h>
 #include <libwebsockets/lws-service.h>
 #include <libwebsockets/lws-write.h>
 #include <libwebsockets/lws-writeable.h>
 #include <libwebsockets/lws-adopt.h>
 #include <libwebsockets/lws-network-helper.h>
-#include <libwebsockets/lws-misc.h>
 #include <libwebsockets/lws-ring.h>
 #include <libwebsockets/lws-sha1-base64.h>
 #include <libwebsockets/lws-x509.h>
@@ -533,6 +542,7 @@ struct lws;
 #include <libwebsockets/lws-lwsac.h>
 #include <libwebsockets/lws-fts.h>
 #include <libwebsockets/lws-diskcache.h>
+#include <libwebsockets/lws-retry.h>
 #include <libwebsockets/lws-sequencer.h>
 
 #include <libwebsockets/abstract/abstract.h>

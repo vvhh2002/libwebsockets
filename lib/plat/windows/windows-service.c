@@ -28,6 +28,7 @@
 LWS_EXTERN int
 _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 {
+	lws_usec_t timeout_us = timeout_ms * LWS_US_PER_MS;
 	struct lws_context_per_thread *pt;
 	WSANETWORKEVENTS networkevents;
 	struct lws_pollfd *pfd;
@@ -114,18 +115,18 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		/* still somebody left who wants forced service? */
 		if (!lws_service_adjust_timeout(context, 1, pt->tid))
 			/* yes... come back again quickly */
-			timeout_ms = 0;
+			timeout_us = 0;
 	}
 
-	if (timeout_ms) {
-		lws_usec_t t;
+	if (timeout_us) {
+		lws_usec_t us;
 
 		lws_pt_lock(pt, __func__);
 		/* don't stay in poll wait longer than next hr timeout */
-		t =  __lws_hrtimer_service(pt);
+		us = __lws_sul_check(&pt->pt_sul_owner, lws_now_usecs());
+		if (us && us < timeout_us)
+			timeout_us = us;
 
-		if ((lws_usec_t)timeout_ms * 1000 > t)
-			timeout_ms = (int)(t / 1000);
 		lws_pt_unlock(pt);
 	}
 
@@ -137,14 +138,16 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		       FD_ROUTING_INTERFACE_CHANGE |
 		       FD_ADDRESS_LIST_CHANGE);
 
-	ev = WSAWaitForMultipleEvents(1, &pt->events, FALSE, timeout_ms, FALSE);
+	ev = WSAWaitForMultipleEvents(1, &pt->events, FALSE,
+				      timeout_us / LWS_US_PER_MS, FALSE);
 	if (ev == WSA_WAIT_EVENT_0) {
 		EnterCriticalSection(&pt->interrupt_lock);
 		interrupt_requested = pt->interrupt_requested;
 		pt->interrupt_requested = 0;
 		LeaveCriticalSection(&pt->interrupt_lock);
-		if(interrupt_requested) {
-			lws_broadcast(context, LWS_CALLBACK_EVENT_WAIT_CANCELLED, NULL, 0);
+		if (interrupt_requested) {
+			lws_broadcast(pt, LWS_CALLBACK_EVENT_WAIT_CANCELLED,
+				      NULL, 0);
 			return 0;
 		}
 
@@ -207,11 +210,3 @@ lws_plat_service(struct lws_context *context, int timeout_ms)
 {
 	return _lws_plat_service_tsi(context, timeout_ms, 0);
 }
-
-
-
-void
-lws_plat_service_periodic(struct lws_context *context)
-{
-}
-

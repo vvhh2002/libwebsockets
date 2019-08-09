@@ -567,7 +567,7 @@ bail3:
 			lwsl_info("reason: %s\n", cce);
 		wsi->protocol->callback(wsi,
 			LWS_CALLBACK_CLIENT_CONNECTION_ERROR,
-			wsi->user_space, (void *)cce, cce ? strlen(cce) : 0);
+			wsi->user_space, (void *)cce, strlen(cce));
 		wsi->already_did_cce = 1;
 		lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS, "cbail3");
 		return -1;
@@ -604,8 +604,7 @@ lws_http_transaction_completed_client(struct lws *wsi)
 	 * If not, that's it for us.
 	 */
 
-	if (lws_dll_is_detached(&wsi->dll_cli_active_conns,
-				&wsi->vhost->dll_cli_active_conns_head))
+	if (lws_dll2_is_detached(&wsi->dll_cli_active_conns))
 		return -1;
 
 	/* if this was a queued guy, close him and remove from queue */
@@ -822,8 +821,13 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 			port = wsi->c_port;
 			/* +1 as lws_client_reset expects leading / omitted */
 			path = new_path + 1;
-			lws_strncpy(new_path, lws_hdr_simple_ptr(wsi,
+			if (lws_hdr_simple_ptr(wsi,_WSI_TOKEN_CLIENT_URI))
+				lws_strncpy(new_path, lws_hdr_simple_ptr(wsi,
 				   _WSI_TOKEN_CLIENT_URI), sizeof(new_path));
+			else {
+				new_path[0] = '/';
+				new_path[1] = '\0';
+			}
 			q = strrchr(new_path, '/');
 			if (q)
 				lws_strncpy(q + 1, p, sizeof(new_path) -

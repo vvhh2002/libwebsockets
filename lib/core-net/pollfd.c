@@ -231,6 +231,23 @@ lws_accept_modulation(struct lws_context *context,
 }
 #endif
 
+#if defined(_DEBUG)
+void
+__dump_fds(struct lws_context_per_thread *pt, const char *s)
+{
+	unsigned int n;
+
+	lwsl_warn("%s: fds_count %u, %s\n", __func__, pt->fds_count, s);
+
+	for (n = 0; n < pt->fds_count; n++)
+		lwsl_warn("  %d: fd %d, wsi %p, pos_in_fds: %d\n",
+			n + 1, pt->fds[n].fd, wsi_from_fd(pt->context, pt->fds[n].fd),
+			wsi_from_fd(pt->context, pt->fds[n].fd)->position_in_fds_table);
+}
+#else
+#define __dump_fds(x, y)
+#endif
+
 int
 __insert_wsi_socket_into_fds(struct lws_context *context, struct lws *wsi)
 {
@@ -238,6 +255,7 @@ __insert_wsi_socket_into_fds(struct lws_context *context, struct lws *wsi)
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 	int ret = 0;
 
+//	__dump_fds(pt, "pre insert");
 
 	lwsl_debug("%s: %p: tsi=%d, sock=%d, pos-in-fds=%d\n",
 		  __func__, wsi, wsi->tsi, wsi->desc.sockfd, pt->fds_count);
@@ -294,6 +312,8 @@ __insert_wsi_socket_into_fds(struct lws_context *context, struct lws *wsi)
 					   wsi->user_space, (void *)&pa, 1))
 		ret = -1;
 
+//	__dump_fds(pt, "post insert");
+
 	return ret;
 }
 
@@ -305,6 +325,8 @@ __remove_wsi_socket_from_fds(struct lws *wsi)
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 	struct lws *end_wsi;
 	int v, m, ret = 0;
+
+//	__dump_fds(pt, "pre remove");
 
 #if !defined(_WIN32)
 	if (!wsi->context->max_fds_unrelated_to_ulimit &&
@@ -334,9 +356,8 @@ __remove_wsi_socket_from_fds(struct lws *wsi)
 		context->event_loop_ops->io(wsi,
 				  LWS_EV_STOP | LWS_EV_READ | LWS_EV_WRITE |
 				  LWS_EV_PREPARE_DELETION);
-
-	/*
-	lwsl_debug("%s: wsi=%p, skt=%d, fds pos=%d, end guy pos=%d, endfd=%d\n",
+/*
+	lwsl_notice("%s: wsi=%p, skt=%d, fds pos=%d, end guy pos=%d, endfd=%d\n",
 		  __func__, wsi, wsi->desc.sockfd, wsi->position_in_fds_table,
 		  pt->fds_count, pt->fds[pt->fds_count - 1].fd); */
 
@@ -394,6 +415,8 @@ __remove_wsi_socket_from_fds(struct lws *wsi)
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_UNLOCK_POLL,
 					      wsi->user_space, (void *) &pa, 1))
 		ret = -1;
+
+//	__dump_fds(pt, "post remove");
 
 	return ret;
 }
@@ -498,13 +521,9 @@ lws_same_vh_protocol_insert(struct lws *wsi, int n)
 {
 	lws_vhost_lock(wsi->vhost);
 
-	if (!lws_dll_is_detached(&wsi->same_vh_protocol,
-				 &wsi->vhost->same_vh_protocol_heads[n]))
-		lws_dll_remove_track_tail(&wsi->same_vh_protocol,
-					  &wsi->vhost->same_vh_protocol_heads[n]);
-
-	lws_dll_add_head(&wsi->same_vh_protocol,
-			 &wsi->vhost->same_vh_protocol_heads[n]);
+	lws_dll2_remove(&wsi->same_vh_protocol);
+	lws_dll2_add_head(&wsi->same_vh_protocol,
+			  &wsi->vhost->same_vh_protocol_owner[n]);
 
 	wsi->bound_vhost_index = n;
 
@@ -514,15 +533,8 @@ lws_same_vh_protocol_insert(struct lws *wsi, int n)
 void
 __lws_same_vh_protocol_remove(struct lws *wsi)
 {
-	struct lws_dll *head;
-
-	if (!wsi->vhost || !wsi->vhost->same_vh_protocol_heads)
-		return;
-
-	head = &wsi->vhost->same_vh_protocol_heads[(int)wsi->bound_vhost_index];
-
-	if (!lws_dll_is_detached(&wsi->same_vh_protocol, head))
-		lws_dll_remove_track_tail(&wsi->same_vh_protocol, head);
+	if (wsi->vhost && wsi->vhost->same_vh_protocol_owner)
+		lws_dll2_remove(&wsi->same_vh_protocol);
 }
 
 void
@@ -557,8 +569,8 @@ lws_callback_on_writable_all_protocol_vhost(const struct lws_vhost *vhost,
 
 	n = (int)(protocol - vhost->protocols);
 
-	lws_start_foreach_dll_safe(struct lws_dll *, d, d1,
-				   vhost->same_vh_protocol_heads[n].next) {
+	lws_start_foreach_dll_safe(struct lws_dll2 *, d, d1,
+			lws_dll2_get_head(&vhost->same_vh_protocol_owner[n])) {
 		wsi = lws_container_of(d, struct lws, same_vh_protocol);
 
 		assert(wsi->protocol == protocol);

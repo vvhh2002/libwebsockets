@@ -33,7 +33,7 @@ typedef struct lws_abstxp_unit_test_priv {
 	char					note[128];
 	struct lws_abs				*abs;
 
-	lws_sequencer_t				*seq;
+	lws_seq_t				*seq;
 	lws_unit_test_t				*current_test;
 	lws_unit_test_packet_t			*expect;
 	lws_unit_test_packet_test_cb		result_cb;
@@ -78,7 +78,8 @@ lws_unit_test_packet_dispose(abs_unit_test_priv_t *priv,
 
 	priv->disposition = disp;
 
-	lws_sequencer_event(priv->seq, UTSEQ_MSG_DISPOSITION_KNOWN, NULL);
+	lws_seq_queue_event(priv->seq, UTSEQ_MSG_DISPOSITION_KNOWN,
+				  NULL, NULL);
 
 	return disp;
 }
@@ -125,7 +126,7 @@ process_expect(abs_unit_test_priv_t *priv)
 
 static lws_seq_cb_return_t
 unit_test_sequencer_cb(struct lws_sequencer *seq, void *user, int event,
-		       void *data)
+		       void *data, void *aux)
 {
 	seq_priv_t *s = (seq_priv_t *)user;
 	abs_unit_test_priv_t *priv = (abs_unit_test_priv_t *)s->ai->ati;
@@ -134,10 +135,10 @@ unit_test_sequencer_cb(struct lws_sequencer *seq, void *user, int event,
 	switch ((int)event) {
 	case LWSSEQ_CREATED: /* our sequencer just got started */
 		lwsl_notice("%s: %s: created\n", __func__,
-			    lws_sequencer_name(seq));
+			    lws_seq_name(seq));
 		if (s->ai->at->client_conn(s->ai)) {
 			lwsl_notice("%s: %s: abstract client conn failed\n",
-					__func__, lws_sequencer_name(seq));
+					__func__, lws_seq_name(seq));
 
 			return LWSSEQ_RET_DESTROY;
 		}
@@ -256,7 +257,8 @@ ph:
 		goto done;
 
 done:
-		lws_sequencer_timeout(lws_sequencer_from_user(s), 0);
+		lws_seq_timeout_us(lws_seq_from_user(s),
+					 LWSSEQTO_NONE);
 		priv->expect++;
 		if (!priv->expect->buffer) {
 			/* the sequence has completed */
@@ -280,7 +282,7 @@ lws_atcut_close(lws_abs_transport_inst_t *ati)
 
 	lwsl_notice("%s\n", __func__);
 
-	lws_sequencer_event(priv->seq, UTSEQ_MSG_CLOSING, NULL);
+	lws_seq_queue_event(priv->seq, UTSEQ_MSG_CLOSING, NULL, NULL);
 
 	return 0;
 }
@@ -332,7 +334,7 @@ lws_atcut_tx(lws_abs_transport_inst_t *ati, uint8_t *buf, size_t len)
 
 	priv->expect++;
 
-	lws_sequencer_event(priv->seq, UTSEQ_MSG_POST_TX_KICK, NULL);
+	lws_seq_queue_event(priv->seq, UTSEQ_MSG_POST_TX_KICK, NULL, NULL);
 
 	return 0;
 }
@@ -377,12 +379,13 @@ lws_atcut_client_conn(const lws_abs_t *abs)
 	priv->disposition = LPE_CONTINUE;
 	priv->note[0] = '\0';
 
-	lws_sequencer_timeout(priv->seq, priv->current_test->max_secs);
+	lws_seq_timeout_us(priv->seq, priv->current_test->max_secs *
+					    LWS_US_PER_SEC);
 
 	lwsl_notice("%s: %s: test '%s': start\n", __func__, abs->ap->name,
 		    priv->current_test->name);
 
-	lws_sequencer_event(priv->seq, UTSEQ_MSG_CONNECTING, NULL);
+	lws_seq_queue_event(priv->seq, UTSEQ_MSG_CONNECTING, NULL, NULL);
 
 	return 0;
 }
@@ -401,7 +404,7 @@ lws_atcut_ask_for_writeable(lws_abs_transport_inst_t *ati)
 	 * until we have returned to the event loop, just like a real
 	 * callback_on_writable()
 	 */
-	lws_sequencer_event(priv->seq, UTSEQ_MSG_WRITEABLE, NULL);
+	lws_seq_queue_event(priv->seq, UTSEQ_MSG_WRITEABLE, NULL, NULL);
 
 	return 0;
 }
@@ -414,16 +417,22 @@ static int
 lws_atcut_create(lws_abs_t *ai)
 {
 	abs_unit_test_priv_t *priv;
-	lws_sequencer_t *seq;
+	lws_seq_t *seq;
+	lws_seq_info_t i;
 	seq_priv_t *s;
+
+	memset(&i, 0, sizeof(i));
+	i.context = ai->vh->context;
+	i.user_size = sizeof(*s);
+	i.puser = (void **)&s;
+	i.cb = unit_test_sequencer_cb;
+	i.name = "unit-test-seq";
 
 	/*
 	 * Create the sequencer for the steps in a single unit test
 	 */
 
-	seq = lws_sequencer_create(ai->vh->context, 0, sizeof(*s),
-				   (void **)&s, unit_test_sequencer_cb,
-				   "unit-test-seq");
+	seq = lws_seq_create(&i);
 	if (!seq) {
 		lwsl_err("%s: unable to create sequencer\n", __func__);
 

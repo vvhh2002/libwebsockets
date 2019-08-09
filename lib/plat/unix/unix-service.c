@@ -22,10 +22,6 @@
 #define _GNU_SOURCE
 #include "core/private.h"
 
-#if defined(LWS_HAVE_MALLOC_TRIM)
-#include <malloc.h>
-#endif
-
 int
 lws_poll_listen_fd(struct lws_pollfd *fd)
 {
@@ -35,6 +31,7 @@ lws_poll_listen_fd(struct lws_pollfd *fd)
 LWS_EXTERN int
 _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 {
+	lws_usec_t timeout_us = ((lws_usec_t)timeout_ms) * LWS_US_PER_MS;
 	volatile struct lws_foreign_thread_pollfd *ftp, *next;
 	volatile struct lws_context_per_thread *vpt;
 	struct lws_context_per_thread *pt;
@@ -62,9 +59,9 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		memset(&_lws, 0, sizeof(_lws));
 		_lws.context = context;
 
-		pt->service_tid  =
-			context->vhost_list->protocols[0].callback(
-			&_lws, LWS_CALLBACK_GET_THREAD_ID, NULL, NULL, 0);
+		pt->service_tid = context->vhost_list->protocols[0].callback(
+					&_lws, LWS_CALLBACK_GET_THREAD_ID,
+					NULL, NULL, 0);
 		pt->service_tid_detected = 1;
 	}
 
@@ -77,21 +74,24 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		/* still somebody left who wants forced service? */
 		if (!lws_service_adjust_timeout(context, 1, pt->tid))
 			/* yes... come back again quickly */
-			timeout_ms = 0;
+			timeout_us = 0;
 	}
 
-	if (timeout_ms) {
+	if (timeout_us) {
+		lws_usec_t us;
+
 		lws_pt_lock(pt, __func__);
 		/* don't stay in poll wait longer than next hr timeout */
-		lws_usec_t t =  __lws_hrtimer_service(pt);
-		if ((lws_usec_t)timeout_ms * 1000 > t)
-			timeout_ms = t / 1000;
+		us = __lws_sul_check(&pt->pt_sul_owner, lws_now_usecs());
+		if (us && us < timeout_us)
+			timeout_us = us;
+
 		lws_pt_unlock(pt);
 	}
 
 	vpt->inside_poll = 1;
 	lws_memory_barrier();
-	n = poll(pt->fds, pt->fds_count, timeout_ms);
+	n = poll(pt->fds, pt->fds_count, timeout_us / LWS_US_PER_MS);
 	vpt->inside_poll = 0;
 	lws_memory_barrier();
 
@@ -128,18 +128,7 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 	vpt->foreign_pfd_list = NULL;
 	lws_memory_barrier();
 
-	/* we have come out of a poll wait... check the hrtimer list */
-
-	__lws_hrtimer_service(pt);
-
 	lws_pt_unlock(pt);
-
-	/*
-	 * if there are any pending sequencer events, handle the next one
-	 * for all sequencers with pending events.  If nothing to do returns
-	 * immediately.
-	 */
-	lws_pt_do_pending_sequencer_events(pt);
 
 	m = 0;
 #if defined(LWS_ROLE_WS) && !defined(LWS_WITHOUT_EXTENSIONS)
@@ -157,7 +146,6 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		!m &&
 #endif
 		!n) { /* nothing to do */
-		lws_service_fd_tsi(context, NULL, tsi);
 		lws_service_do_ripe_rxflow(pt);
 
 		return 0;
@@ -208,19 +196,4 @@ int
 lws_plat_service(struct lws_context *context, int timeout_ms)
 {
 	return _lws_plat_service_tsi(context, timeout_ms, 0);
-}
-
-
-void
-lws_plat_service_periodic(struct lws_context *context)
-{
-#if !defined(LWS_NO_DAEMONIZE)
-	/* if our parent went down, don't linger around */
-	if (context->started_with_parent &&
-	    kill(context->started_with_parent, 0) < 0)
-		kill(getpid(), SIGTERM);
-#endif
-#if defined(LWS_HAVE_MALLOC_TRIM)
-	malloc_trim(4 * 1024);
-#endif
 }
