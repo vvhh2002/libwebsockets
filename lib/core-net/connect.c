@@ -45,8 +45,9 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	struct lws *wsi, *safe = NULL;
 	const struct lws_protocols *p;
 	const char *local = i->protocol;
+	int tid = 0;
 #if LWS_MAX_SMP > 1
-	int n, tid;
+	int n;
 #endif
 
 	if (i->context->requested_kill)
@@ -55,12 +56,15 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	if (!i->context->protocol_init_done)
 		if (lws_protocol_init(i->context))
 			return NULL;
+
 	/*
 	 * If we have .local_protocol_name, use it to select the local protocol
 	 * handler to bind to.  Otherwise use .protocol if http[s].
 	 */
 	if (i->local_protocol_name)
 		local = i->local_protocol_name;
+
+	lws_stats_bump(&i->context->pt[tid], LWSSTATS_C_CONNS_CLIENT, 1);
 
 	/* PHASE 1: create a bare wsi */
 
@@ -84,15 +88,17 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 		goto bail;
 	}
 
+#if LWS_MAX_SMP > 1
+	tid = wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_GET_THREAD_ID,
+						NULL, NULL, 0);
+#endif
+
 	/*
 	 * PHASE 2: if SMP, bind the client to whatever tsi the current thread
 	 * represents
 	 */
 
 #if LWS_MAX_SMP > 1
-	tid = wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_GET_THREAD_ID,
-						NULL, NULL, 0);
-
 	lws_context_lock(i->context, "client find tsi");
 
 	for (n = 0; n < i->context->count_threads; n++)
@@ -302,6 +308,8 @@ bail2:
 #endif
 	if (i->pwsi)
 		*i->pwsi = NULL;
+
+	lws_stats_bump(&i->context->pt[tid], LWSSTATS_C_CONNS_CLIENT_FAILED, 1);
 
 	return NULL;
 }

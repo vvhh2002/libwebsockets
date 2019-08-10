@@ -76,13 +76,15 @@ lws_sul_wsitimeout_cb(lws_sorted_usec_list_t *sul)
 	struct lws *wsi = lws_container_of(sul, struct lws, sul_timeout);
 	struct lws_context_per_thread *pt = &wsi->context->pt[(int)wsi->tsi];
 
-	lws_stats_atomic_bump(wsi->context, pt, LWSSTATS_C_TIMEOUTS, 1);
+	if (wsi->pending_timeout != PENDING_TIMEOUT_USER_OK)
+		lws_stats_bump(pt, LWSSTATS_C_TIMEOUTS, 1);
 
 	/* no need to log normal idle keepalive timeout */
 //		if (wsi->pending_timeout != PENDING_TIMEOUT_HTTP_KEEPALIVE_IDLE)
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
+	if (wsi->pending_timeout != PENDING_TIMEOUT_USER_OK)
 		lwsl_info("wsi %p: TIMEDOUT WAITING on %d "
-			  "(did hdr %d, ah %p, wl %d\n",
+			  "(did hdr %d, ah %p, wl %d)\n",
 			  (void *)wsi, wsi->pending_timeout,
 			  wsi->hdr_parsing_completed, wsi->http.ah,
 			  pt->http.ah_wait_list_length);
@@ -91,8 +93,9 @@ lws_sul_wsitimeout_cb(lws_sorted_usec_list_t *sul)
 		lwsl_notice("CGI timeout: %s\n", wsi->http.cgi->summary);
 #endif
 #else
-	lwsl_info("wsi %p: TIMEDOUT WAITING on %d ", (void *)wsi,
-		  wsi->pending_timeout);
+	if (wsi->pending_timeout != PENDING_TIMEOUT_USER_OK)
+		lwsl_info("wsi %p: TIMEDOUT WAITING on %d ", (void *)wsi,
+				wsi->pending_timeout);
 #endif
 	/* cgi timeout */
 	if (wsi->pending_timeout != PENDING_TIMEOUT_HTTP_KEEPALIVE_IDLE)
@@ -104,11 +107,11 @@ lws_sul_wsitimeout_cb(lws_sorted_usec_list_t *sul)
 		 * don't try to do protocol cleanup like flush partials.
 		 */
 		wsi->socket_is_permanently_unusable = 1;
-	if (lwsi_state(wsi) == LRS_WAITING_SSL && wsi->protocol)
-		wsi->protocol->callback(wsi,
-			LWS_CALLBACK_CLIENT_CONNECTION_ERROR,
-			wsi->user_space,
+#if !defined(LWS_NO_CLIENT)
+	if (lwsi_state(wsi) == LRS_WAITING_SSL)
+		lws_inform_client_conn_fail(wsi,
 			(void *)"Timed out waiting SSL", 21);
+#endif
 
 	__lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS, "timeout");
 }

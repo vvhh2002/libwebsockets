@@ -147,6 +147,8 @@ _lws_change_pollfd(struct lws *wsi, int _and, int _or, struct lws_pollargs *pa)
 	if (wsi->http2_substream)
 		return 0;
 
+#if defined(LWS_WITH_EXTERNAL_POLL)
+
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi,
 			    	    	      LWS_CALLBACK_CHANGE_MODE_POLL_FD,
@@ -154,6 +156,7 @@ _lws_change_pollfd(struct lws *wsi, int _and, int _or, struct lws_pollargs *pa)
 		ret = -1;
 		goto bail;
 	}
+#endif
 
 	if (context->event_loop_ops->io) {
 		if (_and & LWS_POLLIN)
@@ -239,10 +242,13 @@ __dump_fds(struct lws_context_per_thread *pt, const char *s)
 
 	lwsl_warn("%s: fds_count %u, %s\n", __func__, pt->fds_count, s);
 
-	for (n = 0; n < pt->fds_count; n++)
+	for (n = 0; n < pt->fds_count; n++) {
+		struct lws *wsi = wsi_from_fd(pt->context, pt->fds[n].fd);
+
 		lwsl_warn("  %d: fd %d, wsi %p, pos_in_fds: %d\n",
-			n + 1, pt->fds[n].fd, wsi_from_fd(pt->context, pt->fds[n].fd),
-			wsi_from_fd(pt->context, pt->fds[n].fd)->position_in_fds_table);
+			n + 1, pt->fds[n].fd, wsi,
+			wsi ? wsi->position_in_fds_table : -1);
+	}
 }
 #else
 #define __dump_fds(x, y)
@@ -251,7 +257,9 @@ __dump_fds(struct lws_context_per_thread *pt, const char *s)
 int
 __insert_wsi_socket_into_fds(struct lws_context *context, struct lws *wsi)
 {
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	struct lws_pollargs pa = { wsi->desc.sockfd, LWS_POLLIN, 0 };
+#endif
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 	int ret = 0;
 
@@ -280,10 +288,13 @@ __insert_wsi_socket_into_fds(struct lws_context *context, struct lws *wsi)
 	assert(wsi->event_pipe || wsi->vhost);
 	assert(lws_socket_is_valid(wsi->desc.sockfd));
 
+#if defined(LWS_WITH_EXTERNAL_POLL)
+
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_LOCK_POLL,
 					   wsi->user_space, (void *) &pa, 1))
 		return -1;
+#endif
 
 	if (insert_wsi(context, wsi))
 		return -1;
@@ -292,25 +303,32 @@ __insert_wsi_socket_into_fds(struct lws_context *context, struct lws *wsi)
 
 	pt->fds[wsi->position_in_fds_table].fd = wsi->desc.sockfd;
 	pt->fds[wsi->position_in_fds_table].events = LWS_POLLIN;
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	pa.events = pt->fds[pt->fds_count].events;
+#endif
 
 	lws_plat_insert_socket_into_fds(context, wsi);
+
+#if defined(LWS_WITH_EXTERNAL_POLL)
 
 	/* external POLL support via protocol 0 */
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_ADD_POLL_FD,
 					   wsi->user_space, (void *) &pa, 0))
 		ret =  -1;
+#endif
 #ifndef LWS_NO_SERVER
 	/* if no more room, defeat accepts on this thread */
 	if ((unsigned int)pt->fds_count == context->fd_limit_per_thread - 1)
 		lws_accept_modulation(context, pt, 0);
 #endif
 
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_UNLOCK_POLL,
 					   wsi->user_space, (void *)&pa, 1))
 		ret = -1;
+#endif
 
 //	__dump_fds(pt, "post insert");
 
@@ -321,7 +339,9 @@ int
 __remove_wsi_socket_from_fds(struct lws *wsi)
 {
 	struct lws_context *context = wsi->context;
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	struct lws_pollargs pa = { wsi->desc.sockfd, 0, 0 };
+#endif
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 	struct lws *end_wsi;
 	int v, m, ret = 0;
@@ -337,11 +357,12 @@ __remove_wsi_socket_from_fds(struct lws *wsi)
 		return 1;
 	}
 #endif
-
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	if (wsi->vhost && wsi->vhost->protocols &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_LOCK_POLL,
 					   wsi->user_space, (void *)&pa, 1))
 		return -1;
+#endif
 
 	lws_same_vh_protocol_remove(wsi);
 
@@ -398,11 +419,13 @@ __remove_wsi_socket_from_fds(struct lws *wsi)
 		wsi->position_in_fds_table = LWS_NO_FDS_POS;
 	}
 
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	/* remove also from external POLL support via protocol 0 */
 	if (lws_socket_is_valid(wsi->desc.sockfd) && wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_DEL_POLL_FD,
 					      wsi->user_space, (void *) &pa, 0))
 		ret = -1;
+#endif
 
 #ifndef LWS_NO_SERVER
 	if (!context->being_destroyed &&
@@ -411,10 +434,12 @@ __remove_wsi_socket_from_fds(struct lws *wsi)
 		lws_accept_modulation(context, pt, 1);
 #endif
 
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_UNLOCK_POLL,
 					      wsi->user_space, (void *) &pa, 1))
 		ret = -1;
+#endif
 
 //	__dump_fds(pt, "post remove");
 
@@ -436,16 +461,21 @@ __lws_change_pollfd(struct lws *wsi, int _and, int _or)
 	if (!context)
 		return 1;
 
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_LOCK_POLL,
 					      wsi->user_space, (void *) &pa, 0))
 		return -1;
+#endif
 
 	ret = _lws_change_pollfd(wsi, _and, _or, &pa);
+
+#if defined(LWS_WITH_EXTERNAL_POLL)
 	if (wsi->vhost &&
 	    wsi->vhost->protocols[0].callback(wsi, LWS_CALLBACK_UNLOCK_POLL,
 					   wsi->user_space, (void *) &pa, 0))
 		ret = -1;
+#endif
 
 	return ret;
 }
@@ -478,12 +508,11 @@ lws_callback_on_writable(struct lws *wsi)
 
 	pt = &wsi->context->pt[(int)wsi->tsi];
 
-	lws_stats_atomic_bump(wsi->context, pt, LWSSTATS_C_WRITEABLE_CB_REQ, 1);
+	lws_stats_bump(pt, LWSSTATS_C_WRITEABLE_CB_REQ, 1);
 #if defined(LWS_WITH_STATS)
 	if (!wsi->active_writable_req_us) {
-		wsi->active_writable_req_us = lws_time_in_microseconds();
-		lws_stats_atomic_bump(wsi->context, pt,
-				      LWSSTATS_C_WRITEABLE_CB_EFF_REQ, 1);
+		wsi->active_writable_req_us = lws_now_usecs();
+		lws_stats_bump(pt, LWSSTATS_C_WRITEABLE_CB_EFF_REQ, 1);
 	}
 #endif
 
