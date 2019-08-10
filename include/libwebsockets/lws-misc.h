@@ -885,4 +885,17 @@ lws_get_ssl(struct lws *wsi);
 LWS_VISIBLE LWS_EXTERN void
 lws_explicit_bzero(void *p, size_t len);
 
+typedef struct lws_humanize_unit {
+	const char *name; /* array ends with NULL name */
+	uint64_t factor;
+} lws_humanize_unit_t;
+
+LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_si[];
+LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_si_bytes[];
+LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_us[];
+
+LWS_VISIBLE LWS_EXTERN int
+lws_humanize(char *buf, int len, uint64_t value,
+	     const lws_humanize_unit_t *schema);
+
 ///@}
