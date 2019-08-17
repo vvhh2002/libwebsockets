@@ -1,25 +1,35 @@
 /*
  * libwebsockets - small server side websockets and web server implementation
  *
- * Copyright (C) 2010-2019 Andy Green <andy@warmcat.com>
+ * Copyright (C) 2010 - 2019 Andy Green <andy@warmcat.com>
  *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation:
- *  version 2.1 of the License.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- *  MA  02110-1301  USA
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
  */
 
-#include "core/private.h"
+#include "private-lib-core.h"
+
+static int
+sul_compare(const lws_dll2_t *d, const lws_dll2_t *i)
+{
+	return ((lws_sorted_usec_list_t *)d)->us -
+			((lws_sorted_usec_list_t *)i)->us;
+}
 
 int
 __lws_sul_insert(lws_dll2_owner_t *own, lws_sorted_usec_list_t *sul,
@@ -42,29 +52,7 @@ __lws_sul_insert(lws_dll2_owner_t *own, lws_sorted_usec_list_t *sul,
 	 * cheap to check it every second
 	 */
 
-	lws_start_foreach_dll_safe(struct lws_dll2 *, p, tp,
-				   lws_dll2_get_head(own)) {
-		/* .list is always first member in lws_sorted_usec_list_t */
-		lws_sorted_usec_list_t *sul1 = (lws_sorted_usec_list_t *)p;
-
-		assert(sul1->us); /* shouldn't be on the list otherwise */
-		assert(sul != sul1);
-		if (sul1->us >= sul->us) {
-			/* drop us in before this guy */
-			lws_dll2_add_before(&sul->list, &sul1->list);
-
-			// lws_dll2_describe(own, "post-insert");
-
-			return 0;
-		}
-	} lws_end_foreach_dll_safe(p, tp);
-
-	/*
-	 * Either nobody on the list yet to compare him to, or he's the
-	 * furthest away timeout... stick him at the tail end
-	 */
-
-	lws_dll2_add_tail(&sul->list, own);
+	lws_dll2_add_sorted(&sul->list, own, sul_compare);
 
 	// lws_dll2_describe(own, "post-tail-insert");
 

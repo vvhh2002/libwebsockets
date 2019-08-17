@@ -132,6 +132,7 @@ option(LWS_WITH_MINIZ "Use miniz instead of zlib" OFF)
 option(LWS_WITH_DEPRECATED_LWS_DLL "Migrate to lws_dll2 instead ASAP" OFF)
 option(LWS_WITH_SEQUENCER "lws_seq_t support" ON)
 option(LWS_WITH_EXTERNAL_POLL "Support external POLL integration using callback messages (not recommended)" OFF)
+option(LWS_WITH_LWS_DSH "Support lws_dsh_t Disordered Shared Heap" OFF)
 #
 # to use miniz, enable both LWS_WITH_ZLIB and LWS_WITH_MINIZ
 #
@@ -221,6 +222,7 @@ if (NOT LWS_WITH_NETWORK)
 	set(LWS_WITH_POLL 0)
 	set(LWS_WITH_SEQUENCER 0)
 	set(LWS_ROLE_DBUS 0)
+	set(LWS_WITH_LWS_DSH 0)
 endif()
 
 if (LWS_WITH_STRUCT_SQLITE3)
@@ -253,7 +255,7 @@ project(libwebsockets C)
 set(PACKAGE "libwebsockets")
 set(CPACK_PACKAGE_NAME "${PACKAGE}")
 set(CPACK_PACKAGE_VERSION_MAJOR "3")
-set(CPACK_PACKAGE_VERSION_MINOR "1")
+set(CPACK_PACKAGE_VERSION_MINOR "2")
 set(CPACK_PACKAGE_VERSION_PATCH "99")
 set(CPACK_PACKAGE_RELEASE 1)
 set(CPACK_GENERATOR "RPM")
@@ -261,7 +263,7 @@ set(CPACK_PACKAGE_VERSION "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSIO
 set(CPACK_PACKAGE_VENDOR "andy@warmcat.com")
 set(CPACK_PACKAGE_CONTACT "andy@warmcat.com")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PACKAGE} ${PACKAGE_VERSION}")
-set(SOVERSION "14")
+set(SOVERSION "15")
 if(NOT CPACK_GENERATOR)
     if(UNIX)
         set(CPACK_GENERATOR "TGZ")
@@ -337,7 +339,26 @@ if (NOT LWS_ROLE_WS)
 	set(LWS_WITHOUT_EXTENSIONS 1)
 endif()
 
-include_directories(include plugins)
+if (LWS_WITH_MBEDTLS)
+	include_directories(lib/tls/mbedtls/wrapper/include)
+endif()
+
+include_directories(include plugins lib/core lib/core-net lib/event-libs include/abstract lib/tls lib/roles lib/event-libs/libuv lib/event-libs/poll lib/event-libs/libevent lib/event-libs/libev lib/jose/jwe lib/jose/jws lib/jose lib/misc lib/roles/http lib/roles/http/compression lib/roles/h1 lib/roles/h2 lib/roles/ws lib/roles/cgi lib/roles/dbus lib/roles/raw-proxy)
+
+if (LWS_WITH_ESP32)
+	include_directories(lib/plat/esp32)
+else()
+	if (WIN32)
+		include_directories(lib/plat/windows)
+	else()
+		if (LWS_WITH_OPTEE)
+			include_directories(lib/plat/optee)
+		else()
+			include_directories(lib/plat/unix)
+		endif()
+	endif()
+endif()
+
 
 if (LWS_WITH_LWSWS)
  message(STATUS "LWS_WITH_LWSWS --> Enabling LWS_WITH_PLUGINS and LWS_WITH_LIBUV")
@@ -917,6 +938,16 @@ if (NOT LWS_HAVE_REALLOC)
 	set(realloc rpl_realloc)
 endif()
 
+if (UNIX)
+	execute_process(COMMAND uname -n OUTPUT_VARIABLE NODENAME)
+	# Need to chomp the \n at end of output.
+	string(REGEX REPLACE "[\n]+" "" NODENAME "${NODENAME}")
+
+	if( NODENAME STREQUAL "smartos" )
+		add_definitions( "-D__smartos__" )
+		set(SMARTOS 1)
+	endif()
+endif()
 
 if (MSVC)
 	# Turn off stupid microsoft security warnings.
@@ -928,7 +959,7 @@ include_directories("${PROJECT_SOURCE_DIR}/lib")
 # Group headers and sources.
 # Some IDEs use this for nicer file structure.
 set(HDR_PRIVATE
-	lib/core/private.h)
+	lib/core/private-lib-core.h)
 
 set(HDR_PUBLIC
 	"${PROJECT_SOURCE_DIR}/include/libwebsockets.h"
@@ -969,6 +1000,11 @@ if (LWS_WITH_NETWORK)
 		lib/core-net/adopt.c
 		lib/roles/pipe/ops-pipe.c
 	)
+
+	if (LWS_WITH_LWS_DSH)
+		list(APPEND SOURCES
+			lib/core-net/lws-dsh.c)
+	endif()
 
 	if (LWS_WITH_SEQUENCER)
 		list(APPEND SOURCES
@@ -1102,7 +1138,7 @@ if (NOT LWS_WITHOUT_CLIENT)
 	list(APPEND SOURCES
 		lib/core-net/connect.c
 		lib/core-net/client.c
-		lib/roles/http/client/client.c
+		lib/roles/http/client/client-http.c
 		lib/roles/http/client/client-handshake.c)
 endif()
 
@@ -1168,12 +1204,12 @@ if (LWS_WITH_SSL)
 		
 	if (LWS_WITH_MBEDTLS)
 		list(APPEND SOURCES
-			lib/tls/mbedtls/tls.c
-			lib/tls/mbedtls/x509.c
+			lib/tls/mbedtls/mbedtls-tls.c
+			lib/tls/mbedtls/mbedtls-x509.c
 		)
 		if (LWS_WITH_NETWORK)
 			list(APPEND SOURCES
-				lib/tls/mbedtls/ssl.c
+				lib/tls/mbedtls/mbedtls-ssl.c
 			)
 		endif()
 		if (LWS_WITH_GENCRYPTO)
@@ -1188,12 +1224,12 @@ if (LWS_WITH_SSL)
 		endif()
 	else()
 		list(APPEND SOURCES
-			lib/tls/openssl/tls.c
-			lib/tls/openssl/x509.c
+			lib/tls/openssl/openssl-tls.c
+			lib/tls/openssl/openssl-x509.c
 		)
 		if (LWS_WITH_NETWORK)
 			list(APPEND SOURCES
-				lib/tls/openssl/ssl.c
+				lib/tls/openssl/openssl-ssl.c
 			)
 		endif()
 		if (LWS_WITH_GENCRYPTO)
@@ -1816,6 +1852,10 @@ if (UNIX)
 	list(APPEND LIB_LIST m)
 endif()
 
+if(SMARTOS)
+	list(APPEND LIB_LIST socket)
+endif()
+
 if (HAIKU)
 	list(APPEND LIB_LIST network)
 endif()
@@ -1823,8 +1863,6 @@ endif()
 if (LWS_HAVE_LIBCAP)
 	list(APPEND LIB_LIST cap )
 endif()
-
-
 
 # Setup the linking for all libs.
 foreach (lib ${LWS_LIBRARIES})

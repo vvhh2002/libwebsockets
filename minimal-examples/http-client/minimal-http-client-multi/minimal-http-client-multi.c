@@ -332,7 +332,7 @@ int main(int argc, const char **argv)
 	start = us();
 	m = 0;
 	while (n >= 0 && !interrupted)
-		n = lws_service(context, 30000);
+		n = lws_service(context, 0);
 
 	lwsl_user("Duration: %lldms\n", (us() - start) / 1000);
 	lws_context_destroy(context);

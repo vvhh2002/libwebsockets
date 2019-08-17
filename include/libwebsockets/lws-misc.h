@@ -1,24 +1,25 @@
 /*
  * libwebsockets - small server side websockets and web server implementation
  *
- * Copyright (C) 2010-2018 Andy Green <andy@warmcat.com>
+ * Copyright (C) 2010 - 2019 Andy Green <andy@warmcat.com>
  *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation:
- *  version 2.1 of the License.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- *  MA  02110-1301  USA
- *
- * included from libwebsockets.h
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
  */
 
 /** \defgroup misc Miscellaneous APIs
@@ -294,8 +295,12 @@ lws_dll2_clear(struct lws_dll2 *d);
 LWS_VISIBLE LWS_EXTERN void
 lws_dll2_owner_clear(struct lws_dll2_owner *d);
 
-void
+LWS_VISIBLE LWS_EXTERN void
 lws_dll2_add_before(struct lws_dll2 *d, struct lws_dll2 *after);
+
+LWS_VISIBLE LWS_EXTERN void
+lws_dll2_add_sorted(lws_dll2_t *d, lws_dll2_owner_t *own,
+		    int (*compare)(const lws_dll2_t *d, const lws_dll2_t *i));
 
 #if defined(_DEBUG)
 void
@@ -893,6 +898,27 @@ typedef struct lws_humanize_unit {
 LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_si[];
 LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_si_bytes[];
 LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_us[];
+
+/**
+ * lws_humanize() - Convert possibly large number to himan-readable uints
+ *
+ * \param buf: result string buffer
+ * \param len: remaining length in \p buf
+ * \param value: the uint64_t value to represent
+ * \param schema: and array of scaling factors and units
+ *
+ * This produces a concise string representation of \p value, referening the
+ * schema \p schema of scaling factors and units to find the smallest way to
+ * render it.
+ *
+ * Three schema are exported from lws for general use, humanize_schema_si, which
+ * represents as, eg, "  22.130Gi" or " 128      "; humanize_schema_si_bytes
+ * which is the same but shows, eg, "  22.130GiB", and humanize_schema_us,
+ * which represents a count of us as a human-readable time like "  14.350min",
+ * or "  1.500d".
+ *
+ * You can produce your own schema.
+ */
 
 LWS_VISIBLE LWS_EXTERN int
 lws_humanize(char *buf, int len, uint64_t value,
