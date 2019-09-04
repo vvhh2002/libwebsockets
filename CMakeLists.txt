@@ -33,7 +33,7 @@ option(LWS_WITH_CGI "Include CGI (spawn process with network-connected stdin/out
 option(LWS_IPV6 "Compile with support for ipv6" OFF)
 option(LWS_UNIX_SOCK "Compile with support for UNIX domain socket" OFF)
 option(LWS_WITH_PLUGINS "Support plugins for protocols and extensions" OFF)
-option(LWS_WITH_HTTP_PROXY "Support for HTTP proxying" OFF)
+option(LWS_WITH_HTTP_PROXY "Support for active HTTP proxying" OFF)
 option(LWS_WITH_ZIP_FOPS "Support serving pre-zipped files" OFF)
 option(LWS_WITH_SOCKS5 "Allow use of SOCKS5 proxy on client connections" OFF)
 option(LWS_WITH_GENERIC_SESSIONS "With the Generic Sessions plugin" OFF)
@@ -47,6 +47,7 @@ option(LWS_WITH_HTTP_BROTLI "Also offer brotli http stream compression (requires
 option(LWS_WITH_ACME "Enable support for ACME automatic cert acquisition + maintenance (letsencrypt etc)" OFF)
 option(LWS_WITH_HUBBUB "Enable libhubbub rewriting support" OFF)
 option(LWS_WITH_FTS "Full Text Search support" OFF)
+option(LWS_WITH_ASYNC_DNS "Nonblocking internal IPv4 DNS resolver" OFF)
 #
 # TLS library options... all except mbedTLS are basically OpenSSL variants.
 #
@@ -75,6 +76,9 @@ option(LWS_STATIC_PIC "Build the static version of the library with position-ind
 option(LWS_WITH_ESP32 "Build for ESP32" OFF)
 option(LWS_WITH_ESP32_HELPER "Build ESP32 helper" OFF)
 option(LWS_PLAT_OPTEE "Build for OPTEE" OFF)
+option(LWS_PLAT_FREERTOS "Build for FreeRTOS" OFF)
+option(LWS_PLAT_ANDROID "Android flavour of unix platform" OFF)
+
 #
 # Client / Server / Test Apps build control
 #
@@ -95,12 +99,11 @@ option(LWS_WITHOUT_EXTENSIONS "Don't compile with extensions" ON)
 option(LWS_WITHOUT_BUILTIN_GETIFADDRS "Don't use the BSD getifaddrs implementation from libwebsockets if it is missing (this will result in a compilation error) ... The default is to assume that your libc provides it. On some systems such as uclibc it doesn't exist." OFF)
 option(LWS_FALLBACK_GETHOSTBYNAME "Also try to do dns resolution using gethostbyname if getaddrinfo fails" OFF)
 option(LWS_WITHOUT_BUILTIN_SHA1 "Don't build the lws sha-1 (eg, because openssl will provide it" OFF)
-option(LWS_WITH_LATENCY "Build latency measuring code into the library" OFF)
 option(LWS_WITHOUT_DAEMONIZE "Don't build the daemonization api" ON)
 option(LWS_SSL_SERVER_WITH_ECDH_CERT "Include SSL server use ECDH certificate" OFF)
 option(LWS_WITH_LEJP "With the Lightweight JSON Parser" ON)
 option(LWS_WITH_SQLITE3 "Require SQLITE3 support" OFF)
-option(LWS_WITH_STRUCT_JSON "Generic struct serialization to and from JSON" ON)
+option(LWS_WITH_STRUCT_JSON "Generic struct serialization to and from JSON" OFF)
 option(LWS_WITH_STRUCT_SQLITE3 "Generic struct serialization to and from SQLITE3" OFF)
 option(LWS_WITH_SMTP "Provide SMTP support" OFF)
 if (WIN32 OR LWS_WITH_ESP32)
@@ -133,6 +136,9 @@ option(LWS_WITH_DEPRECATED_LWS_DLL "Migrate to lws_dll2 instead ASAP" OFF)
 option(LWS_WITH_SEQUENCER "lws_seq_t support" ON)
 option(LWS_WITH_EXTERNAL_POLL "Support external POLL integration using callback messages (not recommended)" OFF)
 option(LWS_WITH_LWS_DSH "Support lws_dsh_t Disordered Shared Heap" OFF)
+option(LWS_CLIENT_HTTP_PROXYING "Support external http proxies for client connections" ON)
+option(LWS_WITH_FILE_OPS "Support file operations vfs" ON)
+option(LWS_WITH_DETAILED_LATENCY "Record detailed latency stats for each read and write" OFF)
 #
 # to use miniz, enable both LWS_WITH_ZLIB and LWS_WITH_MINIZ
 #
@@ -149,7 +155,11 @@ else()
 	set(LWS_WITH_ESP32_HELPER OFF)
 endif()
 
-if (WIN32 OR LWS_WITH_ESP32)
+if (LWS_WITH_ESP32)
+	set(LWS_PLAT_FREERTOS 1)
+endif()
+
+if (WIN32 OR LWS_PLAT_FREERTOS)
 	message(STATUS "No LWS_WITH_DIR and LWS_WITH_DIR")
 	set(LWS_WITH_DIR OFF)
 	set(LWS_WITH_LEJP_CONF OFF)
@@ -241,11 +251,11 @@ endif()
 
 # microsoft... that's why you can't have nice things
 
-if (WIN32 OR LWS_WITH_ESP32)
+if (WIN32 OR LWS_PLAT_FREERTOS)
 	set(LWS_UNIX_SOCK 0)
 endif()
 
-if (LWS_WITH_ESP32)
+if (LWS_PLAT_FREERTOS)
 	set(LWS_WITH_LWSAC 0)
 	set(LWS_WITH_FTS 0)
 endif()
@@ -345,8 +355,8 @@ endif()
 
 include_directories(include plugins lib/core lib/core-net lib/event-libs include/abstract lib/tls lib/roles lib/event-libs/libuv lib/event-libs/poll lib/event-libs/libevent lib/event-libs/libev lib/jose/jwe lib/jose/jws lib/jose lib/misc lib/roles/http lib/roles/http/compression lib/roles/h1 lib/roles/h2 lib/roles/ws lib/roles/cgi lib/roles/dbus lib/roles/raw-proxy)
 
-if (LWS_WITH_ESP32)
-	include_directories(lib/plat/esp32)
+if (LWS_PLAT_FREERTOS)
+	include_directories(lib/plat/freertos lib/plat/freertos/esp32)
 else()
 	if (WIN32)
 		include_directories(lib/plat/windows)
@@ -378,13 +388,13 @@ if (LWS_WITH_PLUGINS)
 endif()
 
 if (LWS_ROLE_RAW_PROXY)
- set (LWS_WITHOUT_CLIENT 0)
- set (LWS_WITHOUT_SERVER 0)
+ set (LWS_WITH_CLIENT 1)
+ set (LWS_WITH_SERVER 1)
 endif()
 
 if (LWS_WITH_ACME)
- set (LWS_WITHOUT_CLIENT 0)
- set (LWS_WITHOUT_SERVER 0)
+ set (LWS_WITH_CLIENT 1)
+ set (LWS_WITH_SERVER 1)
  set (LWS_WITH_JOSE 1)
 endif()
 
@@ -409,7 +419,7 @@ if (LWS_WITH_GENERIC_SESSIONS)
  set(LWS_WITH_STRUCT_SQLITE3 1)
 endif()
 
-if (LWS_WITH_ESP32)
+if (LWS_PLAT_FREERTOS)
  set(LWS_WITH_SHARED OFF)
  set(LWS_WITH_MBEDTLS ON)
   # set(LWS_WITHOUT_CLIENT ON)
@@ -534,7 +544,7 @@ endif()
 if (LWS_WITH_SSL AND NOT LWS_WITH_WOLFSSL AND NOT LWS_WITH_MBEDTLS)
 	if ("${LWS_OPENSSL_LIBRARIES}" STREQUAL "" OR "${LWS_OPENSSL_INCLUDE_DIRS}" STREQUAL "")
 	else()
-		if (NOT LWS_WITH_ESP32)
+		if (NOT LWS_PLAT_FREERTOS)
 			set(OPENSSL_LIBRARIES ${LWS_OPENSSL_LIBRARIES})
 		endif()
 		set(OPENSSL_INCLUDE_DIRS ${LWS_OPENSSL_INCLUDE_DIRS})
@@ -564,7 +574,7 @@ if (LWS_WITH_SSL AND LWS_WITH_WOLFSSL)
 endif()
 
 if (LWS_WITH_SSL AND LWS_WITH_MBEDTLS)
-	if ("${LWS_MBEDTLS_LIBRARIES}" STREQUAL "" OR "${LWS_MBEDTLS_INCLUDE_DIRS}" STREQUAL "" AND NOT LWS_WITH_ESP32)
+	if ("${LWS_MBEDTLS_LIBRARIES}" STREQUAL "" OR "${LWS_MBEDTLS_INCLUDE_DIRS}" STREQUAL "" AND NOT LWS_PLAT_FREERTOS)
 
 		find_path(LWS_MBEDTLS_INCLUDE_DIRS mbedtls/ssl.h)
 
@@ -667,20 +677,16 @@ if (LWS_SSL_CLIENT_USE_OS_CA_CERTS)
 	set(LWS_SSL_CLIENT_USE_OS_CA_CERTS 1)
 endif()
 
-if (LWS_WITH_LATENCY)
-	set(LWS_LATENCY 1)
-endif()
-
 if (LWS_WITHOUT_DAEMONIZE OR WIN32)
 	set(LWS_NO_DAEMONIZE 1)
 endif()
 
 if (LWS_WITHOUT_SERVER)
-	set(LWS_NO_SERVER 1)
+	set(LWS_WITHOUT_SERVER 1)
 endif()
 
 if (LWS_WITHOUT_CLIENT)
-	set(LWS_NO_CLIENT 1)
+	set(LWS_WITHOUT_CLIENT 1)
 endif()
 
 if (LWS_WITH_LIBEV)
@@ -709,6 +715,15 @@ endif()
 
 if ("${LWS_MAX_SMP}" STREQUAL "")
 	set(LWS_MAX_SMP 1)
+endif()
+
+set(LWS_WITH_CLIENT 1)
+if (LWS_WITHOUT_CLIENT)
+	set(LWS_WITH_CLIENT 0)
+endif()
+set(LWS_WITH_SERVER 1)
+if (LWS_WITHOUT_SERVER)
+	set(LWS_WITH_SERVER 0)
 endif()
 
 # using any abstract protocol enables LWS_WITH_ABSTRACT
@@ -939,13 +954,14 @@ if (NOT LWS_HAVE_REALLOC)
 endif()
 
 if (UNIX)
-	execute_process(COMMAND uname -n OUTPUT_VARIABLE NODENAME)
-	# Need to chomp the \n at end of output.
-	string(REGEX REPLACE "[\n]+" "" NODENAME "${NODENAME}")
-
-	if( NODENAME STREQUAL "smartos" )
-		add_definitions( "-D__smartos__" )
-		set(SMARTOS 1)
+	execute_process( COMMAND grep -c illumos /lib/ld.so.1 
+			 OUTPUT_VARIABLE ILLUMOS ERROR_QUIET )
+	# Chomp the \n at end of output.
+	string(REGEX REPLACE "[\n]+" "" ILLUMOS "${ILLUMOS}")
+	
+	if(NOT ${ILLUMOS} MATCHES "0")
+		add_definitions( "-D__illumos__" )
+		set(ILLUMOS 1)
 	endif()
 endif()
 
@@ -975,9 +991,12 @@ set(SOURCES
 	lib/core/libwebsockets.c
 	lib/core/logs.c
 	lib/misc/base64-decode.c
-	lib/core/vfs.c
 	lib/misc/lws-ring.c
 )
+
+if (LWS_WITH_FILE_OPS)
+	list(APPEND SOURCES lib/core/vfs.c)
+endif()
 
 if (LWS_WITH_DEPRECATED_LWS_DLL)
 	list(APPEND SOURCES
@@ -1000,6 +1019,16 @@ if (LWS_WITH_NETWORK)
 		lib/core-net/adopt.c
 		lib/roles/pipe/ops-pipe.c
 	)
+
+	if (LWS_WITH_ASYNC_DNS)
+		list(APPEND SOURCES
+			lib/async-dns/async-dns.c)
+	endif()
+
+	if (LWS_WITH_DETAILED_LATENCY)
+		list(APPEND SOURCES
+			lib/core-net/detailed-latency.c)
+	endif()
 
 	if (LWS_WITH_LWS_DSH)
 		list(APPEND SOURCES
@@ -1039,7 +1068,7 @@ endif()
 if (LWS_ROLE_H1 OR LWS_ROLE_H2)
 	list(APPEND SOURCES
 		lib/roles/http/header.c
-		lib/roles/http/server/parsers.c)
+		lib/roles/http/parsers.c)
 	if (LWS_WITH_HTTP_STREAM_COMPRESSION)
 		list(APPEND SOURCES
 			lib/roles/http/compression/stream.c
@@ -1305,27 +1334,32 @@ else()
 			)
 		endif()
 	else()
-		if (LWS_WITH_ESP32)
+		if (LWS_PLAT_FREERTOS)
 			list(APPEND SOURCES
-				lib/plat/esp32/esp32-fds.c
-				lib/plat/esp32/esp32-file.c
-				lib/plat/esp32/esp32-init.c
-				lib/plat/esp32/esp32-misc.c
-				lib/plat/esp32/esp32-pipe.c
-				lib/plat/esp32/esp32-service.c
-				lib/plat/esp32/esp32-sockets.c
+				lib/plat/freertos/freertos-fds.c
+				lib/plat/freertos/freertos-init.c
+				lib/plat/freertos/freertos-misc.c
+				lib/plat/freertos/freertos-pipe.c
+				lib/plat/freertos/freertos-service.c
+				lib/plat/freertos/freertos-sockets.c
+				lib/plat/freertos/freertos-resolv.c
 				lib/misc/romfs.c)
-			if(LWS_WITH_ESP32_HELPER)
-				list(APPEND SOURCES lib/plat/esp32/esp32-helpers.c)
+			if (LWS_WITH_ESP32_HELPER)
+				list(APPEND SOURCES lib/plat/freertos/esp32/esp32-helpers.c)
+			endif()
+			if (LWS_WITH_FILE_OPS)
+				list(APPEND SOURCES lib/plat/freertos/freertos-file.c)
 			endif()
 		else()
 			set(LWS_PLAT_UNIX 1)
 			list(APPEND SOURCES
 				lib/plat/unix/unix-caps.c
-				lib/plat/unix/unix-file.c
 				lib/plat/unix/unix-misc.c
 				lib/plat/unix/unix-init.c
 			)
+			if (LWS_WITH_FILE_OPS)
+				list(APPEND SOURCES lib/plat/unix/unix-file.c)
+			endif()
 			if (LWS_WITH_NETWORK)
 				list(APPEND SOURCES
 					lib/plat/unix/unix-pipe.c
@@ -1333,6 +1367,13 @@ else()
 					lib/plat/unix/unix-sockets.c
 					lib/plat/unix/unix-fds.c
 				)
+				if (LWS_WITH_ASYNC_DNS)
+					if (LWS_PLAT_ANDROID)
+						list(APPEND SOURCES lib/plat/unix/android/android-resolv.c)
+					else()
+						list(APPEND SOURCES lib/plat/unix/unix-resolv.c)
+					endif()
+				endif()
 			endif()
 				
 			if (LWS_WITH_PLUGINS AND LWS_WITH_LIBUV)
@@ -1498,7 +1539,7 @@ if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX OR COMPILER_IS_CLANG)
 		set(CMAKE_C_FLAGS "-Wtype-limits ${CMAKE_C_FLAGS}" )
 	endif()
 
-    if (UNIX AND NOT LWS_WITH_ESP32)
+    if (UNIX AND NOT LWS_PLAT_FREERTOS)
 	    set(CMAKE_C_FLAGS "-Wall -Wsign-compare -Wuninitialized -Werror ${VISIBILITY_FLAG} -Wundef ${GCOV_FLAGS} ${CMAKE_C_FLAGS} ${ASAN_FLAGS}" )
     else()
 	    set(CMAKE_C_FLAGS "-Wall -Wsign-compare -Wuninitialized -Werror ${VISIBILITY_FLAG} ${GCOV_FLAGS} ${CMAKE_C_FLAGS}" )
@@ -1734,19 +1775,19 @@ if (LWS_WITH_SSL)
 	if (NOT chose_ssl)
 		if (NOT OPENSSL_FOUND AND NOT LWS_WITH_BORINGSSL)
 			# TODO: Add support for STATIC also.
-		if (NOT LWS_WITH_ESP32)
+		if (NOT LWS_PLAT_FREERTOS)
 			find_package(OpenSSL REQUIRED)
 		endif()
 			set(OPENSSL_INCLUDE_DIRS "${OPENSSL_INCLUDE_DIR}")
 		endif()
 
 		message("OpenSSL include dir: ${OPENSSL_INCLUDE_DIRS}")
-		if (NOT LWS_WITH_ESP32)
+		if (NOT LWS_PLAT_FREERTOS)
 			message("OpenSSL libraries: ${OPENSSL_LIBRARIES}")
 		endif()
 
 		include_directories("${OPENSSL_INCLUDE_DIRS}")
-		if (NOT LWS_WITH_ESP32)
+		if (NOT LWS_PLAT_FREERTOS)
 			list(APPEND LIB_LIST ${OPENSSL_LIBRARIES})
 		endif()
 
@@ -1852,7 +1893,7 @@ if (UNIX)
 	list(APPEND LIB_LIST m)
 endif()
 
-if(SMARTOS)
+if(ILLUMOS)
 	list(APPEND LIB_LIST socket)
 endif()
 
@@ -1879,6 +1920,10 @@ if (LWS_WITH_ZLIB)
 			LIST(REMOVE_AT CMAKE_REQUIRED_LIBRARIES 0 )
 		endif()
 	endif()
+endif()
+
+if (UNIX)
+	list(APPEND LIB_LIST dl)
 endif()
 
 CHECK_FUNCTION_EXISTS(SSL_CTX_set1_param LWS_HAVE_SSL_CTX_set1_param)
@@ -1913,7 +1958,7 @@ CHECK_FUNCTION_EXISTS(EC_POINT_get_affine_coordinates LWS_HAVE_EC_POINT_get_affi
 endif()
 if (LWS_WITH_MBEDTLS)
 	set(LWS_HAVE_TLS_CLIENT_METHOD 1)
-	if (NOT LWS_WITH_ESP32)
+	if (NOT LWS_PLAT_FREERTOS)
 		# not supported in esp-idf openssl wrapper yet, but is in our version
 		set(LWS_HAVE_X509_VERIFY_PARAM_set1_host 1)
 	endif()
@@ -1971,7 +2016,7 @@ set(GENCERTS 0)
 if (LWS_WITH_SSL AND OPENSSL_EXECUTABLE AND NOT LWS_WITHOUT_TEST_SERVER AND NOT LWS_WITHOUT_SERVER AND NOT LWS_WITHOUT_TESTAPPS)
 	set(GENCERTS 1)
 endif()
-if (LWS_WITH_ESP32)
+if (LWS_PLAT_FREERTOS)
 	set(GENCERTS 1)
 endif()
 message(" GENCERTS = ${GENCERTS}")
@@ -2694,7 +2739,6 @@ message(" LWS_WITHOUT_TEST_SERVER_EXTPOLL = ${LWS_WITHOUT_TEST_SERVER_EXTPOLL}")
 message(" LWS_WITHOUT_TEST_PING = ${LWS_WITHOUT_TEST_PING}")
 message(" LWS_WITHOUT_TEST_CLIENT = ${LWS_WITHOUT_TEST_CLIENT}")
 message(" LWS_WITHOUT_EXTENSIONS = ${LWS_WITHOUT_EXTENSIONS}")
-message(" LWS_WITH_LATENCY = ${LWS_WITH_LATENCY}")
 message(" LWS_WITHOUT_DAEMONIZE = ${LWS_WITHOUT_DAEMONIZE}")
 message(" LWS_WITH_LIBEV = ${LWS_WITH_LIBEV}")
 message(" LWS_WITH_LIBUV = ${LWS_WITH_LIBUV}")
@@ -2721,7 +2765,7 @@ message(" LWS_WITH_GENERIC_SESSIONS = ${LWS_WITH_GENERIC_SESSIONS}")
 message(" LWS_STATIC_PIC = ${LWS_STATIC_PIC}")
 message(" LWS_WITH_RANGES = ${LWS_WITH_RANGES}")
 message(" LWS_PLAT_OPTEE = ${LWS_PLAT_OPTEE}")
-message(" LWS_WITH_ESP32 = ${LWS_WITH_ESP32}")
+message(" LWS_PLAT_FREERTOS = ${LWS_PLAT_FREERTOS}")
 message(" LWS_WITH_ZIP_FOPS = ${LWS_WITH_ZIP_FOPS}")
 message(" LWS_AVOID_SIGPIPE_IGN = ${LWS_AVOID_SIGPIPE_IGN}")
 message(" LWS_WITH_STATS = ${LWS_WITH_STATS}")

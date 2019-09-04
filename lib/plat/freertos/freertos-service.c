@@ -29,7 +29,6 @@ lws_plat_service(struct lws_context *context, int timeout_ms)
 {
 	int n = _lws_plat_service_tsi(context, timeout_ms, 0);
 
-	lws_service_fd_tsi(context, NULL, 0);
 #if !defined(LWS_AMAZON_RTOS)
 	esp_task_wdt_reset();
 #endif
@@ -88,7 +87,7 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 	timeout_us = ((lws_usec_t)timeout_ms) * LWS_US_PER_MS;
 
 	if (!pt->service_tid_detected) {
-		struct lws *_lws = lws_zalloc(sizeof(*_lws), "tid probe");
+		struct lws *_lws = pt->fake_wsi;
 
 		if (!_lws)
 			return 1;
@@ -97,7 +96,6 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 		pt->service_tid = context->vhost_list->protocols[0].callback(
 			_lws, LWS_CALLBACK_GET_THREAD_ID, NULL, NULL, 0);
 		pt->service_tid_detected = 1;
-		lws_free(_lws);
 	}
 
 	/*
@@ -147,6 +145,16 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 
 		n = select(max_fd + 1, &readfds, &writefds, &errfds, ptv);
 		n = 0;
+
+#if defined(LWS_WITH_DETAILED_LATENCY)
+		/*
+		 * so we can track how long it took before we actually read a POLLIN
+		 * that was signalled when we last exited poll()
+		 */
+		if (context->detailed_latency_cb)
+			pt->ust_left_poll = lws_now_usecs();
+#endif
+
 		for (m = 0; m < (int)pt->fds_count; m++) {
 			c = 0;
 			if (FD_ISSET(pt->fds[m].fd, &readfds)) {
@@ -178,11 +186,8 @@ _lws_plat_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 	    pt->context->tls_ops->fake_POLLIN_for_buffered)
 		m |= pt->context->tls_ops->fake_POLLIN_for_buffered(pt);
 
-	if (!m && !n) {
-		lws_service_fd_tsi(context, NULL, tsi);
+	if (!m && !n)
 		return 0;
-	}
-
 
 faked_service:
 	m = lws_service_flag_pending(context, tsi);

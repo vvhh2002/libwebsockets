@@ -903,7 +903,7 @@ lws_server_init_wsi_for_ws(struct lws *wsi)
 	wsi->ws->rx_ubuf_alloc = n;
 	lwsl_debug("Allocating RX buffer %d\n", n);
 
-#if !defined(LWS_WITH_ESP32)
+#if !defined(LWS_PLAT_FREERTOS)
 	if (!wsi->h2_stream_carries_ws)
 		if (setsockopt(wsi->desc.sockfd, SOL_SOCKET, SO_SNDBUF,
 		       (const char *)&n, sizeof n)) {
@@ -1036,7 +1036,7 @@ rops_handle_POLLIN_ws(struct lws_context_per_thread *pt, struct lws *wsi,
 	ebuf.len = 0;
 
 	if (lwsi_state(wsi) == LRS_WAITING_CONNECT) {
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		if ((pollfd->revents & LWS_POLLOUT) &&
 		    lws_handle_POLLOUT_event(wsi, pollfd)) {
 			lwsl_debug("POLLOUT event closed it\n");
@@ -1125,7 +1125,7 @@ rops_handle_POLLIN_ws(struct lws_context_per_thread *pt, struct lws *wsi,
 	if (wsi->ws->rx_draining_ext) {
 
 		lwsl_debug("%s: RX EXT DRAINING: Service\n", __func__);
-#ifndef LWS_NO_CLIENT
+#if defined(LWS_WITH_CLIENT)
 		if (lwsi_role_client(wsi)) {
 			n = lws_ws_client_rx_sm(wsi, 0);
 			if (n < 0)
@@ -1264,7 +1264,7 @@ drain:
 	} while (m);
 
 	if (wsi->http.ah
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			&& !wsi->client_h2_alpn
 #endif
 			) {
@@ -1287,7 +1287,7 @@ drain:
 	    !lws_buflist_next_segment_len(&wsi->buflist, NULL)) {
 		lwsl_info("%s: %p flow buf: drained\n", __func__, wsi);
 		/* having drained the rxflow buffer, can rearm POLLIN */
-#ifdef LWS_NO_SERVER
+#if !defined(LWS_WITH_SERVER)
 		n =
 #endif
 		__lws_rx_flow_control(wsi);

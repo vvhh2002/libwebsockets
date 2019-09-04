@@ -56,7 +56,7 @@ lws_ssl_capable_read(struct lws *wsi, unsigned char *buf, int len)
 
 	errno = 0;
 	n = SSL_read(wsi->tls.ssl, buf, len);
-#if defined(LWS_WITH_ESP32)
+#if defined(LWS_PLAT_FREERTOS)
 	if (!n && errno == LWS_ENOTCONN) {
 		lwsl_debug("%p: SSL_read ENOTCONN\n", wsi);
 		return LWS_SSL_CAPABLE_ERROR;
@@ -109,9 +109,21 @@ lws_ssl_capable_read(struct lws *wsi, unsigned char *buf, int len)
 
 	lws_stats_bump(pt, LWSSTATS_B_READ, n);
 
+#if defined(LWS_WITH_SERVER_STATUS)
 	if (wsi->vhost)
 		wsi->vhost->conn_stats.rx += n;
-
+#endif
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	if (context->detailed_latency_cb) {
+		wsi->detlat.req_size = len;
+		wsi->detlat.acc_size = n;
+		wsi->detlat.type = LDLT_READ;
+		wsi->detlat.latencies[LAT_DUR_PROXY_RX_TO_ONWARD_TX] =
+			lws_now_usecs() - pt->ust_left_poll;
+		wsi->detlat.latencies[LAT_DUR_USERCB] = 0;
+		lws_det_lat_cb(wsi->context, &wsi->detlat);
+	}
+#endif
 	/*
 	 * if it was our buffer that limited what we read,
 	 * check if SSL has additional data pending inside SSL buffers.

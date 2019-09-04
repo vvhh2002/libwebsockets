@@ -40,9 +40,12 @@ lws_tls_fake_POLLIN_for_buffered(struct lws_context_per_thread *pt)
 		struct lws *wsi = lws_container_of(p, struct lws,
 						   tls.dll_pending_tls);
 
-		pt->fds[wsi->position_in_fds_table].revents |=
-			pt->fds[wsi->position_in_fds_table].events & LWS_POLLIN;
-		ret |= pt->fds[wsi->position_in_fds_table].revents & LWS_POLLIN;
+		if (wsi->position_in_fds_table >= 0) {
+
+			pt->fds[wsi->position_in_fds_table].revents |=
+					pt->fds[wsi->position_in_fds_table].events & LWS_POLLIN;
+			ret |= pt->fds[wsi->position_in_fds_table].revents & LWS_POLLIN;
+		}
 
 	} lws_end_foreach_dll_safe(p, p1);
 
@@ -65,7 +68,7 @@ lws_ssl_remove_wsi_from_buffered_list(struct lws *wsi)
 	lws_pt_unlock(pt);
 }
 
-
+#if defined(LWS_WITH_SERVER)
 int
 lws_tls_check_cert_lifetime(struct lws_vhost *v)
 {
@@ -112,7 +115,6 @@ lws_tls_check_all_cert_lifetimes(struct lws_context *context)
 
 	return 0;
 }
-
 
 /*
  * LWS_TLS_EXTANT_NO         : skip adding the cert
@@ -161,7 +163,6 @@ lws_tls_generic_cert_checks(struct lws_vhost *vhost, const char *cert,
 	return LWS_TLS_EXTANT_YES;
 }
 
-#if !defined(LWS_NO_SERVER)
 /*
  * update the cert for every vhost using the given path
  */

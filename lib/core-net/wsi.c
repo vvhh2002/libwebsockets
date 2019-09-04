@@ -94,7 +94,7 @@ lws_get_network_wsi(struct lws *wsi)
 
 #if defined(LWS_WITH_HTTP2)
 	if (!wsi->http2_substream
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			&& !wsi->client_h2_substream
 #endif
 	)
@@ -750,47 +750,6 @@ lws_get_context(const struct lws *wsi)
 {
 	return wsi->context;
 }
-
-#ifdef LWS_LATENCY
-void
-lws_latency(struct lws_context *context, struct lws *wsi, const char *action,
-	    int ret, int completed)
-{
-	unsigned long long u;
-	char buf[256];
-
-	u = lws_now_usecs();
-
-	if (!action) {
-		wsi->latency_start = u;
-		if (!wsi->action_start)
-			wsi->action_start = u;
-		return;
-	}
-	if (completed) {
-		if (wsi->action_start == wsi->latency_start)
-			sprintf(buf,
-			  "Completion first try lat %lluus: %p: ret %d: %s\n",
-					u - wsi->latency_start,
-						      (void *)wsi, ret, action);
-		else
-			sprintf(buf,
-			  "Completion %lluus: lat %lluus: %p: ret %d: %s\n",
-				u - wsi->action_start,
-					u - wsi->latency_start,
-						      (void *)wsi, ret, action);
-		wsi->action_start = 0;
-	} else
-		sprintf(buf, "lat %lluus: %p: ret %d: %s\n",
-			      u - wsi->latency_start, (void *)wsi, ret, action);
-
-	if (u - wsi->latency_start > context->worst_latency) {
-		context->worst_latency = u - wsi->latency_start;
-		strcpy(context->worst_latency_info, buf);
-	}
-	lwsl_latency("%s", buf);
-}
-#endif
 
 LWS_VISIBLE int LWS_WARN_UNUSED_RESULT
 lws_raw_transaction_completed(struct lws *wsi)

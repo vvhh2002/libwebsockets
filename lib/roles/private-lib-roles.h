@@ -87,6 +87,7 @@ enum lwsi_state {
 	/* Phase 1: pre-transport */
 
 	LRS_UNCONNECTED				= LWSIFS_NOT_EST | 0,
+	LRS_WAITING_ASYNC_DNS			= LWSIFS_NOT_EST | 32,
 	LRS_WAITING_CONNECT			= LWSIFS_NOT_EST | 1,
 
 	/* Phase 2: establishing intermediaries on top of transport */
@@ -333,4 +334,8 @@ int
 lws_role_call_adoption_bind(struct lws *wsi, int type, const char *prot);
 
 struct lws *
-lws_client_connect_3(struct lws *wsi, struct lws *wsi_piggyback, ssize_t plen);
+lws_client_connect_4(struct lws *wsi, struct lws *wsi_piggyback, ssize_t plen);
+
+struct lws *
+lws_client_connect_3(struct lws *wsi, const char *ads,
+			struct addrinfo *result, int n);

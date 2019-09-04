@@ -41,7 +41,17 @@ lws_callback_as_writeable(struct lws *wsi)
 		wsi->active_writable_req_us = 0;
 	}
 #endif
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	if (wsi->context->detailed_latency_cb) {
+		lws_usec_t us = lws_now_usecs();
 
+		wsi->detlat.earliest_write_req_pre_write =
+					wsi->detlat.earliest_write_req;
+		wsi->detlat.earliest_write_req = 0;
+		wsi->detlat.latencies[LAT_DUR_PROXY_RX_TO_ONWARD_TX] =
+		      ((uint32_t)us - wsi->detlat.earliest_write_req_pre_write);
+	}
+#endif
 	n = wsi->role_ops->writeable_cb[lwsi_role_server(wsi)];
 
 	m = user_callback_handle_rxflow(wsi->protocol->callback,
@@ -194,7 +204,7 @@ user_service_go_again:
 		else
 			goto bail_ok;
 	}
-	
+
 	lwsl_debug("%s: %p: non mux: wsistate 0x%lx, ops %s\n", __func__, wsi,
 		   (unsigned long)wsi->wsistate, wsi->role_ops->name);
 
@@ -278,7 +288,12 @@ lws_rxflow_cache(struct lws *wsi, unsigned char *buf, int n, int len)
 LWS_VISIBLE LWS_EXTERN int
 lws_service_adjust_timeout(struct lws_context *context, int timeout_ms, int tsi)
 {
-	struct lws_context_per_thread *pt = &context->pt[tsi];
+	struct lws_context_per_thread *pt;
+
+	if (!context)
+		return 1;
+
+	pt = &context->pt[tsi];
 
 	/*
 	 * Figure out if we really want to wait in poll()... we only need to
@@ -351,8 +366,7 @@ lws_buflist_aware_read(struct lws_context_per_thread *pt, struct lws *wsi,
 
 	/* stash what we read */
 
-	n = lws_buflist_append_segment(&wsi->buflist, ebuf->token,
-				       ebuf->len);
+	n = lws_buflist_append_segment(&wsi->buflist, ebuf->token, ebuf->len);
 	if (n < 0)
 		return -1;
 	if (n) {
@@ -462,8 +476,13 @@ lws_service_do_ripe_rxflow(struct lws_context_per_thread *pt)
 int
 lws_service_flag_pending(struct lws_context *context, int tsi)
 {
-	struct lws_context_per_thread *pt = &context->pt[tsi];
+	struct lws_context_per_thread *pt;
 	int forced = 0;
+
+	if (!context)
+		return 1;
+
+	pt = &context->pt[tsi];
 
 	lws_pt_lock(pt, __func__);
 
@@ -498,6 +517,8 @@ lws_service_flag_pending(struct lws_context *context, int tsi)
 		struct lws *wsi = lws_container_of(p, struct lws,
 						   tls.dll_pending_tls);
 
+		if (wsi->position_in_fds_table >= 0) {
+
 		pt->fds[wsi->position_in_fds_table].revents |=
 			pt->fds[wsi->position_in_fds_table].events & LWS_POLLIN;
 		if (pt->fds[wsi->position_in_fds_table].revents & LWS_POLLIN) {
@@ -509,6 +530,7 @@ lws_service_flag_pending(struct lws_context *context, int tsi)
 			 * list then.
 			 */
 			__lws_ssl_remove_wsi_from_buffered_list(wsi);
+		}
 		}
 
 	} lws_end_foreach_dll_safe(p, p1);
@@ -523,11 +545,13 @@ LWS_VISIBLE int
 lws_service_fd_tsi(struct lws_context *context, struct lws_pollfd *pollfd,
 		   int tsi)
 {
-	struct lws_context_per_thread *pt = &context->pt[tsi];
+	struct lws_context_per_thread *pt;
 	struct lws *wsi;
 
-	if (!context || context->being_destroyed1 )
+	if (!context || context->being_destroyed1)
 		return -1;
+
+	pt = &context->pt[tsi];
 
 	if (!pollfd) {
 		/*
@@ -660,12 +684,13 @@ lws_service_fd(struct lws_context *context, struct lws_pollfd *pollfd)
 LWS_VISIBLE int
 lws_service(struct lws_context *context, int timeout_ms)
 {
-	struct lws_context_per_thread *pt = &context->pt[0];
+	struct lws_context_per_thread *pt;
 	int n;
 
 	if (!context)
 		return 1;
 
+	pt = &context->pt[0];
 	pt->inside_service = 1;
 
 	if (context->event_loop_ops->run_pt) {
@@ -686,9 +711,13 @@ lws_service(struct lws_context *context, int timeout_ms)
 LWS_VISIBLE int
 lws_service_tsi(struct lws_context *context, int timeout_ms, int tsi)
 {
-	struct lws_context_per_thread *pt = &context->pt[tsi];
+	struct lws_context_per_thread *pt;
 	int n;
 
+	if (!context)
+		return 1;
+
+	pt = &context->pt[tsi];
 	pt->inside_service = 1;
 #if LWS_MAX_SMP > 1
 	pt->self = pthread_self();

@@ -122,7 +122,7 @@ rops_handle_POLLIN_h2(struct lws_context_per_thread *pt, struct lws *wsi,
 	}
 
 	if (lwsi_state(wsi) == LRS_WAITING_CONNECT) {
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		if ((pollfd->revents & LWS_POLLOUT) &&
 		    lws_handle_POLLOUT_event(wsi, pollfd)) {
 			lwsl_debug("POLLOUT event closed it\n");
@@ -222,7 +222,7 @@ read:
 		return LWS_HPI_RET_PLEASE_CLOSE_ME;
 
 drain:
-#ifndef LWS_NO_CLIENT
+#if defined(LWS_WITH_CLIENT)
 	if (lwsi_role_http(wsi) && lwsi_role_client(wsi) &&
 	    wsi->hdr_parsing_completed && !wsi->told_user_closed) {
 
@@ -308,7 +308,7 @@ drain:
 	 */
 
 	if (wsi->http.ah
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			&& !wsi->client_h2_alpn
 #endif
 			) {
@@ -338,7 +338,7 @@ int rops_handle_POLLOUT_h2(struct lws *wsi)
 	 * Priority 2: H2 protocol packets
 	 */
 	if ((wsi->upgraded_to_http2
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			|| wsi->client_h2_alpn
 #endif
 			) && wsi->h2.h2n->pps) {
@@ -503,7 +503,9 @@ rops_check_upgrades_h2(struct lws *wsi)
 
 	nwsi = lws_get_network_wsi(wsi);
 
+#if defined(LWS_WITH_SERVER_STATUS)
 	wsi->vhost->conn_stats.ws_upg++;
+#endif
 	lwsl_info("Upgrade h2 to ws\n");
 	wsi->h2_stream_carries_ws = 1;
 	nwsi->immortal_substream_count++;
@@ -545,6 +547,7 @@ rops_init_context_h2(struct lws_context *context,
 
 	context->set = lws_h2_stock_settings;
 
+#if defined(LWS_WITH_SERVER)
 	/*
 	 * We only want to do this once... we will do it if we are built
 	 * otherwise h1 ops will do it (or nobody if no http at all)
@@ -558,6 +561,7 @@ rops_init_context_h2(struct lws_context *context,
 		__lws_sul_insert(&pt->pt_sul_owner, &pt->sul_ah_lifecheck,
 				 30 * LWS_US_PER_SEC);
 	}
+#endif
 
 	return 0;
 }
@@ -626,6 +630,9 @@ rops_close_kill_connection_h2(struct lws *wsi, enum lws_close_status reason)
 
 	if (wsi->http2_substream && wsi->h2_stream_carries_ws)
 		lws_h2_rst_stream(wsi, 0, "none");
+	else
+		if (wsi->http2_substream)
+			lws_h2_rst_stream(wsi, H2_ERR_STREAM_CLOSED, "swsi got closed");
 
 	if (wsi->h2.parent_wsi && lwsl_visible(LLL_INFO)) {
 		lwsl_info(" wsi: %p, his parent %p: siblings:\n", wsi,
@@ -638,7 +645,7 @@ rops_close_kill_connection_h2(struct lws *wsi, enum lws_close_status reason)
 	}
 
 	if (wsi->upgraded_to_http2 || wsi->http2_substream
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			|| wsi->client_h2_substream
 #endif
 	) {
@@ -682,20 +689,20 @@ rops_close_kill_connection_h2(struct lws *wsi, enum lws_close_status reason)
 	}
 
 	if ((
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			wsi->client_h2_substream ||
 #endif
 			wsi->http2_substream) &&
 	     wsi->h2.parent_wsi) {
-		lwsl_info("  %p: disentangling from siblings\n", wsi);
 		lws_start_foreach_llp(struct lws **, w,
 				wsi->h2.parent_wsi->h2.child_list) {
+
 			/* disconnect from siblings */
 			if (*w == wsi) {
 				wsi2 = (*w)->h2.sibling_list;
 				(*w)->h2.sibling_list = NULL;
 				*w = wsi2;
-				lwsl_info("  %p disentangled from sibling %p\n",
+				lwsl_debug("  %p disentangled from sibling %p\n",
 					  wsi, wsi2);
 				break;
 			}
@@ -731,7 +738,7 @@ rops_callback_on_writable_h2(struct lws *wsi)
 //		return 0;
 
 	if (wsi->h2.requested_POLLOUT
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			&& !wsi->client_h2_alpn
 #endif
 	) {
@@ -772,7 +779,7 @@ rops_callback_on_writable_h2(struct lws *wsi)
 	/* for network action, act only on the network wsi */
 
 	if (already
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 			&& !network_wsi->client_h2_alpn
 			&& !network_wsi->client_h2_substream
 #endif
@@ -793,13 +800,15 @@ lws_h2_dump_waiting_children(struct lws *wsi)
 	while (wsi) {
 		lwsl_info("  %c %p %s %s\n",
 			  wsi->h2.requested_POLLOUT ? '*' : ' ',
-			  wsi, wsi->role_ops->name, wsi->protocol->name);
+			  wsi, wsi->role_ops->name, wsi->protocol ?
+					  wsi->protocol->name : "noprotocol");
 
 		wsi = wsi->h2.sibling_list;
 	}
 #endif
 }
 
+#if defined(LWS_WITH_SERVER)
 static int
 lws_h2_bind_for_post_before_action(struct lws *wsi)
 {
@@ -841,6 +850,7 @@ lws_h2_bind_for_post_before_action(struct lws *wsi)
 
 	return 0;
 }
+#endif
 
 /*
  * we are the 'network wsi' for potentially many muxed child wsi with
@@ -994,6 +1004,7 @@ rops_perform_user_POLLOUT_h2(struct lws *wsi)
 			goto next_child;
 		}
 
+#if defined(LWS_WITH_SERVER)
 		if (lwsi_state(w) == LRS_DEFERRING_ACTION) {
 
 			/*
@@ -1036,6 +1047,8 @@ rops_perform_user_POLLOUT_h2(struct lws *wsi)
 			goto next_child;
 		}
 
+#if defined(LWS_WITH_FILE_OPS)
+
 		if (lwsi_state(w) == LRS_ISSUING_FILE) {
 
 			((volatile struct lws *)w)->leave_pollout_active = 0;
@@ -1070,6 +1083,8 @@ rops_perform_user_POLLOUT_h2(struct lws *wsi)
 
 			goto next_child;
 		}
+#endif
+#endif
 
 #if defined(LWS_ROLE_WS)
 
@@ -1173,7 +1188,7 @@ rops_alpn_negotiated_h2(struct lws *wsi, const char *alpn)
 	struct allocated_headers *ah;
 
 	lwsl_debug("%s: client %d\n", __func__, lwsi_role_client(wsi));
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 	if (lwsi_role_client(wsi)) {
 		lwsl_info("%s: upgraded to H2\n", __func__);
 		wsi->client_h2_alpn = 1;
@@ -1181,7 +1196,9 @@ rops_alpn_negotiated_h2(struct lws *wsi, const char *alpn)
 #endif
 
 	wsi->upgraded_to_http2 = 1;
+#if defined(LWS_WITH_SERVER_STATUS)
 	wsi->vhost->conn_stats.h2_alpn++;
+#endif
 
 	/* adopt the header info */
 

@@ -152,9 +152,6 @@ lws_tls_client_confirm_peer_cert(struct lws *wsi, char *ebuf, int ebuf_len)
 	lwsl_info("peer provided cert\n");
 
 	n = SSL_get_verify_result(wsi->tls.ssl);
-	lws_latency(wsi->context, wsi,
-			"SSL_get_verify_result LWS_CONNMODE..HANDSHAKE", n, n > 0);
-
         lwsl_debug("get_verify says %d\n", n);
 
 	if (n == X509_V_OK)
@@ -306,3 +303,16 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 
 	return 0;
 }
+
+int
+lws_tls_client_vhost_extra_cert_mem(struct lws_vhost *vh,
+                const uint8_t *der, size_t der_len)
+{
+	if (SSL_CTX_add_client_CA_ASN1(vh->tls.ssl_client_ctx, der_len, der) != 1) {
+		lwsl_err("%s: failed\n", __func__);
+			return 1;
+	}
+
+	return 0;
+}
+

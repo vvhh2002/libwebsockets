@@ -31,7 +31,9 @@ const char * const method_names[] = {
 #endif
 	};
 
+#if defined(LWS_WITH_FILE_OPS)
 static const char * const intermediates[] = { "private", "public" };
+#endif
 
 /*
  * return 0: all done
@@ -41,7 +43,7 @@ static const char * const intermediates[] = { "private", "public" };
  *       REQUIRES CONTEXT LOCK HELD
  */
 
-#ifndef LWS_NO_SERVER
+#if defined(LWS_WITH_SERVER)
 int
 _lws_vhost_init_server(const struct lws_context_creation_info *info,
 		       struct lws_vhost *vhost)
@@ -133,6 +135,8 @@ done_list:
 			if (info) /* first time */
 				lwsl_err("VH %s: iface %s port %d DOESN'T EXIST\n",
 				 vhost->name, vhost->iface, vhost->listen_port);
+			else
+				return -1;
 			return (info->options & LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND) == LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND?
 				-1 : 1;
 		case LWS_ITOSA_NOT_USABLE:
@@ -140,6 +144,8 @@ done_list:
 			if (info) /* first time */
 				lwsl_err("VH %s: iface %s port %d NOT USABLE\n",
 				 vhost->name, vhost->iface, vhost->listen_port);
+			else
+				return -1;
 			return (info->options & LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND) == LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND?
 				-1 : 1;
 		}
@@ -175,10 +181,11 @@ done_list:
 			sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
 		if (sockfd == LWS_SOCK_INVALID) {
-			lwsl_err("ERROR opening socket\n");
+			lwsl_err("%s: ERROR opening socket: errno %d\n",
+					__func__, LWS_ERRNO);
 			return 1;
 		}
-#if !defined(LWS_WITH_ESP32)
+#if !defined(LWS_PLAT_FREERTOS)
 #if (defined(WIN32) || defined(_WIN32)) && defined(SO_EXCLUSIVEADDRUSE)
 		/*
 		 * only accept that we are the only listener on the port
@@ -452,6 +459,7 @@ lws_get_mimetype(const char *file, const struct lws_http_mount *m)
 	return NULL;
 }
 
+#if defined(LWS_WITH_FILE_OPS)
 static lws_fop_flags_t
 lws_vfs_prepare_flags(struct lws *wsi)
 {
@@ -469,7 +477,6 @@ lws_vfs_prepare_flags(struct lws *wsi)
 	return f;
 }
 
-#if !defined(LWS_AMAZON_RTOS)
 static int
 lws_http_serve(struct lws *wsi, char *uri, const char *origin,
 	       const struct lws_http_mount *m)
@@ -491,7 +498,7 @@ lws_http_serve(struct lws *wsi, char *uri, const char *origin,
 	char path[256], sym[2048];
 	unsigned char *p = (unsigned char *)sym + 32 + LWS_PRE, *start = p;
 	unsigned char *end = p + sizeof(sym) - 32 - LWS_PRE;
-#if !defined(WIN32) && !defined(LWS_WITH_ESP32)
+#if !defined(WIN32) && !defined(LWS_PLAT_FREERTOS)
 	size_t len;
 #endif
 	int n;
@@ -531,7 +538,7 @@ lws_http_serve(struct lws *wsi, char *uri, const char *origin,
 		/* if it can't be statted, don't try */
 		if (fflags & LWS_FOP_FLAG_VIRTUAL)
 			break;
-#if defined(LWS_WITH_ESP32)
+#if defined(LWS_PLAT_FREERTOS)
 		break;
 #endif
 #if !defined(WIN32)
@@ -556,7 +563,7 @@ lws_http_serve(struct lws *wsi, char *uri, const char *origin,
 		wsi->http.fop_fd->mod_time = (uint32_t)st.st_mtime;
 		fflags |= LWS_FOP_FLAG_MOD_TIME_VALID;
 
-#if !defined(WIN32) && !defined(LWS_WITH_ESP32)
+#if !defined(WIN32) && !defined(LWS_PLAT_FREERTOS)
 		if ((S_IFMT & st.st_mode) == S_IFLNK) {
 			len = readlink(path, sym, sizeof(sym) - 1);
 			if (len) {
@@ -787,7 +794,7 @@ lws_find_mount(struct lws *wsi, const char *uri_ptr, int uri_len)
 }
 #endif
 
-#if !defined(LWS_WITH_ESP32)
+#if !defined(LWS_PLAT_FREERTOS) && defined(LWS_WITH_FILE_OPS)
 static int
 lws_find_string_in_file(const char *filename, const char *string, int stringlen)
 {
@@ -940,9 +947,12 @@ lws_http_get_uri_and_method(struct lws *wsi, char **puri_ptr, int *puri_len)
 	return -1;
 }
 
+
+
 enum lws_check_basic_auth_results
 lws_check_basic_auth(struct lws *wsi, const char *basic_auth_login_file)
 {
+#if defined(LWS_WITH_FILE_OPS)
 	char b64[160], plain[(sizeof(b64) * 3) / 4], *pcolon;
 	int m, ml, fi;
 
@@ -1008,6 +1018,9 @@ lws_check_basic_auth(struct lws *wsi, const char *basic_auth_login_file)
 		 lws_hdr_simple_ptr(wsi, WSI_TOKEN_HTTP_AUTHORIZATION));
 
 	return LCBA_CONTINUE;
+#else
+	return LCBA_FAILED_AUTH;
+#endif
 }
 
 #if defined(LWS_WITH_HTTP_PROXY)
@@ -1576,7 +1589,7 @@ lws_http_action(struct lws *wsi)
 	wsi->cache_intermediaries = hit->cache_intermediaries;
 
 	m = 1;
-#if !defined(LWS_AMAZON_RTOS)
+#if defined(LWS_WITH_FILE_OPS)
 	if (hit->origin_protocol == LWSMPRO_FILE)
 		m = lws_http_serve(wsi, s, hit->origin, hit);
 #endif
@@ -1771,7 +1784,7 @@ bad_format:
 	return 1;
 }
 
-#if !defined(LWS_NO_SERVER)
+#if defined(LWS_WITH_SERVER)
 int
 lws_http_to_fallback(struct lws *wsi, unsigned char *obuf, size_t olen)
 {
@@ -1908,9 +1921,13 @@ raw_transition:
 			lwsl_info("no host\n");
 
 		if (!lwsi_role_h2(wsi) || !lwsi_role_server(wsi)) {
+#if defined(LWS_WITH_SERVER_STATUS)
 			wsi->vhost->conn_stats.h1_trans++;
+#endif
 			if (!wsi->conn_stat_done) {
+#if defined(LWS_WITH_SERVER_STATUS)
 				wsi->vhost->conn_stats.h1_conn++;
+#endif
 				wsi->conn_stat_done = 1;
 			}
 		}
@@ -1949,7 +1966,9 @@ raw_transition:
 
 					/* wsi close will do the log */
 #endif
+#if defined(LWS_WITH_SERVER_STATUS)
 					wsi->vhost->conn_stats.rejected++;
+#endif
 					/*
 					 * We don't want anything from
 					 * this rejected guy.  Follow
@@ -2015,14 +2034,18 @@ raw_transition:
 
 			if (!strcasecmp(up, "websocket")) {
 #if defined(LWS_ROLE_WS)
+#if defined(LWS_WITH_SERVER_STATUS)
 				wsi->vhost->conn_stats.ws_upg++;
+#endif
 				lwsl_info("Upgrade to ws\n");
 				goto upgrade_ws;
 #endif
 			}
 #if defined(LWS_WITH_HTTP2)
 			if (!strcasecmp(up, "h2c")) {
+#if defined(LWS_WITH_SERVER_STATUS)
 				wsi->vhost->conn_stats.h2_upg++;
+#endif
 				lwsl_info("Upgrade to h2c\n");
 				goto upgrade_h2c;
 			}
@@ -2034,7 +2057,9 @@ raw_transition:
 		lwsl_info("%s: %p: No upgrade\n", __func__, wsi);
 
 		lwsi_set_state(wsi, LRS_ESTABLISHED);
+#if defined(LWS_WITH_FILE_OPS)
 		wsi->http.fop_fd = NULL;
+#endif
 
 #if defined(LWS_WITH_HTTP_STREAM_COMPRESSION)
 		lws_http_compression_validate(wsi);
@@ -2291,7 +2316,7 @@ lws_http_transaction_completed(struct lws *wsi)
 	return 0;
 }
 
-#if !defined(LWS_AMAZON_RTOS)
+#if defined(LWS_WITH_FILE_OPS)
 LWS_VISIBLE int
 lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 		    const char *other_headers, int other_headers_len)
@@ -2582,6 +2607,8 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 }
 #endif
 
+#if defined(LWS_WITH_FILE_OPS)
+
 LWS_VISIBLE int lws_serve_http_file_fragment(struct lws *wsi)
 {
 	struct lws_context *context = wsi->context;
@@ -2857,7 +2884,9 @@ file_had_it:
 	return -1;
 }
 
-#ifndef LWS_NO_SERVER
+#endif
+
+#if defined(LWS_WITH_SERVER)
 LWS_VISIBLE void
 lws_server_get_canonical_hostname(struct lws_context *context,
 				  const struct lws_context_creation_info *info)
@@ -2865,7 +2894,7 @@ lws_server_get_canonical_hostname(struct lws_context *context,
 	if (lws_check_opt(info->options,
 			LWS_SERVER_OPTION_SKIP_SERVER_CANONICAL_NAME))
 		return;
-#if !defined(LWS_WITH_ESP32)
+#if !defined(LWS_PLAT_FREERTOS)
 	/* find canonical hostname */
 	gethostname((char *)context->canonical_hostname,
 		    sizeof(context->canonical_hostname) - 1);
@@ -2877,7 +2906,7 @@ lws_server_get_canonical_hostname(struct lws_context *context,
 }
 #endif
 
-LWS_VISIBLE LWS_EXTERN int
+int
 lws_chunked_html_process(struct lws_process_html_args *args,
 			 struct lws_process_html_state *s)
 {

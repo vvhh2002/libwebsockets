@@ -78,7 +78,7 @@ lws_get_peer_simple(struct lws *wsi, char *name, int namelen);
 #define LWS_ITOSA_BUSY		-3 /* only returned by lws_socket_bind() on
 					EADDRINUSE */
 
-#if !defined(LWS_WITH_ESP32) && !defined(LWS_PLAT_OPTEE)
+#if !defined(LWS_PLAT_FREERTOS) && !defined(LWS_PLAT_OPTEE)
 /**
  * lws_interface_to_sa() - Convert interface name or IP to sockaddr struct
  *
@@ -103,4 +103,7 @@ LWS_VISIBLE LWS_EXTERN int
 lws_interface_to_sa(int ipv6, const char *ifname, struct sockaddr_in *addr,
 		    size_t addrlen);
 #endif
+
+LWS_VISIBLE LWS_EXTERN int
+lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len);
 ///@}

@@ -76,10 +76,6 @@ lws_client_socket_service(struct lws *wsi, struct lws_pollfd *pollfd,
 	char ebuf[128];
 #endif
 	const char *cce = NULL;
-#if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
-	ssize_t len = 0;
-	unsigned char c;
-#endif
 	char *sb = p;
 	int n = 0;
 #if defined(LWS_WITH_SOCKS5)
@@ -112,6 +108,9 @@ lws_client_socket_service(struct lws *wsi, struct lws_pollfd *pollfd,
 		} lws_end_foreach_dll_safe(d, d1);
 
 		if (wfound) {
+#if defined(LWS_WITH_DETAILED_LATENCY)
+			wfound->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
 			/*
 			 * pollfd has the master sockfd in it... we
 			 * need to use that in HANDSHAKE2 to understand
@@ -137,6 +136,9 @@ lws_client_socket_service(struct lws *wsi, struct lws_pollfd *pollfd,
 
 	switch (lwsi_state(wsi)) {
 
+	case LRS_WAITING_ASYNC_DNS:
+		return 0;
+
 	case LRS_WAITING_CONNECT:
 
 		/*
@@ -144,7 +146,7 @@ lws_client_socket_service(struct lws *wsi, struct lws_pollfd *pollfd,
 		 * timeout protection set in client-handshake.c
 		 */
 
-		if (!lws_client_connect_2(wsi)) {
+		if (!lws_client_connect_3(wsi, NULL, NULL, LADNS_RET_FOUND)) {
 			/* closed */
 			lwsl_client("closed\n");
 			return -1;
@@ -217,7 +219,7 @@ lws_client_socket_service(struct lws *wsi, struct lws_pollfd *pollfd,
 			lwsl_client("SOCKS password OK, sending connect\n");
 			if (socks_generate_msg(wsi, SOCKS_MSG_CONNECT, &len)) {
 socks_send_msg_fail:
-				*cce = "socks gen msg fail";
+				cce = "socks gen msg fail";
 				goto bail3;
 			}
 			conn_mode = LRS_WAITING_SOCKS_CONNECT_REPLY;
@@ -250,7 +252,7 @@ socks_reply_fail:
 			lwsl_client("socks connect OK\n");
 
 			/* free stash since we are done with it */
-			lws_client_stash_destroy(wsi);
+			lws_free_set_NULL(wsi->stash);
 			if (lws_hdr_simple_create(wsi,
 						 _WSI_TOKEN_CLIENT_PEER_ADDRESS,
 					       wsi->vhost->socks_proxy_address)) {
@@ -358,6 +360,16 @@ start_ws_handshake:
 		} else
 			wsi->tls.ssl = NULL;
 #endif
+#if defined(LWS_WITH_DETAILED_LATENCY)
+		if (context->detailed_latency_cb) {
+			wsi->detlat.type = LDLT_TLS_NEG_CLIENT;
+			wsi->detlat.latencies[LAT_DUR_PROXY_CLIENT_REQ_TO_WRITE] =
+				lws_now_usecs() -
+				wsi->detlat.earliest_write_req_pre_write;
+			wsi->detlat.latencies[LAT_DUR_USERCB] = 0;
+			lws_det_lat_cb(wsi->context, &wsi->detlat);
+		}
+#endif
 #if defined (LWS_WITH_HTTP2)
 		if (wsi->client_h2_alpn) {
 			/*
@@ -367,7 +379,7 @@ start_ws_handshake:
 			 * So this is it, we are an h2 master client connection
 			 * now, not an h1 client connection.
 			 */
-#if defined (LWS_WITH_TLS)
+#if defined(LWS_WITH_TLS) && defined(LWS_WITH_SERVER)
 			lws_tls_server_conn_alpn(wsi);
 #endif
 
@@ -400,7 +412,6 @@ start_ws_handshake:
 		}
 
 		/* send our request to the server */
-		lws_latency_pre(context, wsi);
 
 		w = _lws_client_wsi_master(wsi);
 		lwsl_info("%s: HANDSHAKE2: %p: sending headers on %p "
@@ -409,9 +420,11 @@ start_ws_handshake:
 			  (unsigned long)w->wsistate, w->desc.sockfd,
 			  wsi->desc.sockfd);
 
+#if defined(LWS_WITH_DETAILED_LATENCY)
+		wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
+
 		n = lws_ssl_capable_write(w, (unsigned char *)sb, (int)(p - sb));
-		lws_latency(context, wsi, "send lws_issue_raw", n,
-			    n == p - sb);
 		switch (n) {
 		case LWS_SSL_CAPABLE_ERROR:
 			lwsl_debug("ERROR writing to client socket\n");
@@ -523,14 +536,11 @@ client_http_body_sent:
 		 * in one packet, since at that point the connection is
 		 * definitively ready from browser pov.
 		 */
-		len = 1;
-		while (wsi->http.ah->parser_state != WSI_PARSING_COMPLETE &&
-		       len > 0) {
-			int plen = 1;
 
-			n = lws_ssl_capable_read(wsi, &c, 1);
-			lws_latency(context, wsi, "send lws_issue_raw", n,
-				    n == 1);
+		while (wsi->http.ah->parser_state != WSI_PARSING_COMPLETE) {
+			int plen, n;
+
+			plen = n = lws_ssl_capable_read(wsi, &pt->serv_buf[0], 256);
 			switch (n) {
 			case 0:
 			case LWS_SSL_CAPABLE_ERROR:
@@ -540,10 +550,23 @@ client_http_body_sent:
 				return 0;
 			}
 
-			if (lws_parse(wsi, &c, &plen)) {
+			if (lws_parse(wsi, &pt->serv_buf[0], &n)) {
 				lwsl_warn("problems parsing header\n");
 				cce = "problems parsing header";
 				goto bail3;
+			}
+			if (n) {
+				assert(wsi->http.ah->parser_state ==
+						WSI_PARSING_COMPLETE);
+
+				if (lws_buflist_append_segment(&wsi->buflist,
+					  &pt->serv_buf[0] + plen - n, n) < 0) {
+					cce = "oom";
+					goto bail3;
+				}
+
+				lws_dll2_add_head(&wsi->dll_buflist,
+						  &pt->dll_buflist_owner);
 			}
 		}
 
@@ -705,7 +728,7 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 	char *p, *q;
 	char new_path[300];
 
-	lws_client_stash_destroy(wsi);
+	lws_free_set_NULL(wsi->stash);
 
 	ah = wsi->http.ah;
 	if (!wsi->do_ws) {
@@ -861,6 +884,7 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 			if (wsi)
 				goto bail3;
 
+			/* wsi has closed */
 			return 1;
 		}
 		return 0;

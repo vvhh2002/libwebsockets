@@ -65,7 +65,7 @@ lws_create_client_ws_object(const struct lws_client_connect_info *i,
 	return 0;
 }
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 int
 lws_ws_handshake_client(struct lws *wsi, unsigned char **buf, size_t len)
 {
@@ -323,10 +323,12 @@ bad_conn_format:
 	} while (e > 0);
 
 	pc = lws_hdr_simple_ptr(wsi, _WSI_TOKEN_CLIENT_SENT_PROTOCOLS);
+#if defined(_DEBUG)
 	if (!pc) {
 		lwsl_parser("lws_client_int_s_hs: no protocol list\n");
 	} else
 		lwsl_parser("lws_client_int_s_hs: protocol list '%s'\n", pc);
+#endif
 
 	/*
 	 * confirm the protocol the server wants to talk was in the list
@@ -389,7 +391,7 @@ identify_protocol:
 	if (!lwsi_role_client(wsi))
 		wsi->protocol = NULL;
 
-	while (wsi->vhost->protocols[n].callback) {
+	while (n < wsi->vhost->count_protocols) {
 		if (!wsi->protocol &&
 		    strcmp(p, wsi->vhost->protocols[n].name) == 0) {
 			wsi->protocol = &wsi->vhost->protocols[n];
@@ -398,7 +400,7 @@ identify_protocol:
 		n++;
 	}
 
-	if (!wsi->vhost->protocols[n].callback) { /* no match */
+	if (n == wsi->vhost->count_protocols) { /* no match */
 		/* if server, that's already fatal */
 		if (!lwsi_role_client(wsi)) {
 			lwsl_info("%s: fail protocol %s\n", __func__, p);
@@ -659,7 +661,7 @@ check_accept:
 	wsi->ws->rx_ubuf_alloc = n;
 	lwsl_info("Allocating client RX buffer %d\n", n);
 
-#if !defined(LWS_WITH_ESP32)
+#if !defined(LWS_PLAT_FREERTOS)
 	if (setsockopt(wsi->desc.sockfd, SOL_SOCKET, SO_SNDBUF,
 		       (const char *)&n, sizeof n)) {
 		lwsl_warn("Failed to set SNDBUF to %d", n);

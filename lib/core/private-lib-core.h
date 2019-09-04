@@ -110,8 +110,8 @@
   *
   */
 
-#if defined(LWS_WITH_ESP32)
- #include "private-lib-plat-esp32.h"
+#if defined(LWS_PLAT_FREERTOS)
+ #include "private-lib-plat-freertos.h"
 #else
  #if defined(WIN32) || defined(_WIN32)
   #include "private-lib-plat-windows.h"
@@ -259,29 +259,75 @@ struct lws_deferred_free
  */
 
 struct lws_context {
-	time_t last_ws_ping_pong_check_s;
-	lws_usec_t time_up; /* monotonic */
-	const struct lws_plat_file_ops *fops;
+ #if defined(LWS_WITH_SERVER)
+ 	char canonical_hostname[96];
+ #endif
+
+#if defined(LWS_WITH_FILE_OPS)
 	struct lws_plat_file_ops fops_platform;
-	struct lws_context **pcontext_finalize;
+#endif
 
-	const struct lws_tls_ops *tls_ops;
+#if defined(LWS_WITH_ZIP_FOPS)
+	struct lws_plat_file_ops fops_zip;
+#endif
 
-	const char *username, *groupname;
+#if defined(LWS_WITH_NETWORK)
+
+	struct lws_context_per_thread pt[LWS_MAX_SMP];
 
 #if defined(LWS_WITH_HTTP2)
 	struct http2_settings set;
 #endif
-#if defined(LWS_WITH_ZIP_FOPS)
-	struct lws_plat_file_ops fops_zip;
-#endif
-#if defined(LWS_WITH_NETWORK)
-	struct lws_context_per_thread pt[LWS_MAX_SMP];
+
+#if defined(LWS_WITH_SERVER_STATUS)
 	struct lws_conn_stats conn_stats;
+#endif
+#if LWS_MAX_SMP > 1
+	struct lws_mutex_refcount mr;
+#endif
+
+#if defined(LWS_WITH_NETWORK)
+#if defined(LWS_WITH_LIBEV)
+	struct lws_context_eventlibs_libev ev;
+#endif
+#if defined(LWS_WITH_LIBUV)
+	struct lws_context_eventlibs_libuv uv;
+#endif
+#if defined(LWS_WITH_LIBEVENT)
+	struct lws_context_eventlibs_libevent event;
+#endif
+
+#if defined(LWS_WITH_TLS)
+	struct lws_context_tls tls;
+#endif
+
+#if defined(LWS_WITH_ASYNC_DNS)
+	lws_async_dns_t		async_dns;
+#endif
+
+	/* pointers */
+
 	struct lws_vhost *vhost_list;
 	struct lws_vhost *no_listener_vhost_list;
 	struct lws_vhost *vhost_pending_destruction_list;
+
+#if defined(LWS_WITH_SERVER)
+	const char *server_string;
+#endif
+
+	struct lws_event_loop_ops *event_loop_ops;
+#endif
+
+#if defined(LWS_WITH_TLS)
+	const struct lws_tls_ops *tls_ops;
+#endif
+
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	det_lat_buf_cb_t detailed_latency_cb;
+#endif
+#if defined(LWS_WITH_PLUGINS)
 	struct lws_plugin *plugin_list;
+#endif
 #ifdef _WIN32
 /* different implementation between unix and windows */
 	struct lws_fd_hashtable fd_hashtable[FD_HASHTABLE_MODULUS];
@@ -289,9 +335,16 @@ struct lws_context {
 	struct lws **lws_lookup;
 
 #endif
+#endif /* NETWORK */
+
+#if defined(LWS_WITH_FILE_OPS)
+	const struct lws_plat_file_ops *fops;
 #endif
-#if LWS_MAX_SMP > 1
-	struct lws_mutex_refcount mr;
+
+	struct lws_context **pcontext_finalize;
+	const char *username, *groupname;
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	const char *detailed_latency_filepath;
 #endif
 
 #if defined(LWS_AMAZON_RTOS)
@@ -315,8 +368,10 @@ struct lws_context {
 	void *external_baggage_free_on_destroy;
 	const struct lws_token_limits *token_limits;
 	void *user_space;
+#if defined(LWS_WITH_SERVER)
 	const struct lws_protocol_vhost_options *reject_service_keywords;
 	lws_reload_func deprecation_cb;
+#endif
 	void (*eventlib_signal_cb)(void *event_lib_handle, int signum);
 
 #if defined(LWS_HAVE_SYS_CAPABILITY_H) && defined(LWS_HAVE_LIBCAP)
@@ -324,32 +379,11 @@ struct lws_context {
 	char count_caps;
 #endif
 
-#if defined(LWS_WITH_NETWORK)
-#if defined(LWS_WITH_LIBEV)
-	struct lws_context_eventlibs_libev ev;
-#endif
-#if defined(LWS_WITH_LIBUV)
-	struct lws_context_eventlibs_libuv uv;
-#endif
-#if defined(LWS_WITH_LIBEVENT)
-	struct lws_context_eventlibs_libevent event;
-#endif
-	struct lws_event_loop_ops *event_loop_ops;
-#endif
+	lws_usec_t time_up; /* monotonic */
 
-#if defined(LWS_WITH_TLS) && defined(LWS_WITH_NETWORK)
-	struct lws_context_tls tls;
-#endif
+	time_t last_ws_ping_pong_check_s;
 
-	char canonical_hostname[128];
-	const char *server_string;
-
-#ifdef LWS_LATENCY
-	unsigned long worst_latency;
-	char worst_latency_info[256];
-#endif
-
-#if defined(LWS_WITH_ESP32)
+#if defined(LWS_PLAT_FREERTOS)
 	unsigned long time_last_state_dump;
 	uint32_t last_free_heap;
 #endif
@@ -362,7 +396,9 @@ struct lws_context {
 	int uid, gid;
 
 	int fd_random;
-
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	int latencies_fd;
+#endif
 	int count_wsi_allocated;
 	int count_cgi_spawned;
 	unsigned int options;
@@ -417,7 +453,7 @@ void
 lws_vhost_destroy1(struct lws_vhost *vh);
 
 
-#if defined(LWS_WITH_ESP32)
+#if defined(LWS_PLAT_FREERTOS)
 LWS_EXTERN int
 lws_find_string_in_file(const char *filename, const char *str, int stringlen);
 #endif
@@ -441,34 +477,8 @@ lws_strdup(const char *s);
 
 LWS_EXTERN int log_level;
 
-
-
-#ifndef LWS_LATENCY
-static LWS_INLINE void
-lws_latency(struct lws_context *context, struct lws *wsi, const char *action,
-	    int ret, int completion) {
-	do {
-		(void)context; (void)wsi; (void)action; (void)ret;
-		(void)completion;
-	} while (0);
-}
-static LWS_INLINE void
-lws_latency_pre(struct lws_context *context, struct lws *wsi) {
-	do { (void)context; (void)wsi; } while (0);
-}
-#else
-#define lws_latency_pre(_context, _wsi) lws_latency(_context, _wsi, NULL, 0, 0)
-extern void
-lws_latency(struct lws_context *context, struct lws *wsi, const char *action,
-	    int ret, int completion);
-#endif
-
-
 LWS_EXTERN int
 lws_b64_selftest(void);
-
-
-
 
 
 #ifndef LWS_NO_DAEMONIZE
@@ -618,6 +628,9 @@ LWS_EXTERN int alloc_file(struct lws_context *context, const char *filename,
 void
 lws_context_destroy2(struct lws_context *context);
 
+#if !defined(PRIu64)
+#define PRIu64 "llu"
+#endif
 
 #ifdef __cplusplus
 };

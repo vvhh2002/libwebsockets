@@ -104,7 +104,7 @@ try_pollout:
 		return LWS_HPI_RET_PLEASE_CLOSE_ME;
 	}
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 	if (lws_client_socket_service(wsi, pollfd, NULL))
 		return LWS_HPI_RET_WSI_ALREADY_DIED;
 #endif
@@ -155,7 +155,7 @@ rops_client_bind_raw_proxy(struct lws *wsi,
 
 		/* finalize */
 
-		if (!wsi->user_space && wsi->stash->method)
+		if (!wsi->user_space && wsi->stash->cis[CIS_METHOD])
 			if (lws_ensure_user_space(wsi))
 				return 1;
 

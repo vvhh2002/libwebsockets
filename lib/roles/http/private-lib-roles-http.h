@@ -53,7 +53,7 @@ enum http_conn_type {
  * other APIs to get information out of it.
  */
 
-#if defined(LWS_WITH_ESP32)
+#if defined(LWS_PLAT_FREERTOS)
 typedef uint16_t ah_data_idx_t;
 #else
 typedef uint32_t ah_data_idx_t;
@@ -117,7 +117,7 @@ struct allocated_headers {
 	 */
 	uint8_t frag_index[WSI_TOKEN_COUNT];
 
-#ifndef LWS_NO_CLIENT
+#if defined(LWS_WITH_CLIENT)
 	char initial_handshake_hash_base64[30];
 #endif
 	int hdr_token_idx;
@@ -191,10 +191,14 @@ struct lws_peer_role_http {
 };
 
 struct lws_vhost_role_http {
+#if defined(LWS_CLIENT_HTTP_PROXYING)
 	char http_proxy_address[128];
+#endif
 	const struct lws_http_mount *mount_list;
 	const char *error_document_404;
+#if defined(LWS_CLIENT_HTTP_PROXYING)
 	unsigned int http_proxy_port;
+#endif
 };
 
 #ifdef LWS_WITH_ACCESS_LOG
@@ -224,9 +228,11 @@ struct _lws_http_mode_related {
 	struct allocated_headers *ah;
 	struct lws *ah_wait_list;
 
+#if defined(LWS_WITH_FILE_OPS)
 	lws_filepos_t filepos;
 	lws_filepos_t filelen;
 	lws_fop_fd_t fop_fd;
+#endif
 
 #if defined(LWS_WITH_RANGES)
 	struct lws_range_parsing range;
@@ -263,7 +269,7 @@ struct _lws_http_mode_related {
 };
 
 
-#ifndef LWS_NO_CLIENT
+#if defined(LWS_WITH_CLIENT)
 enum lws_chunk_parser {
 	ELCP_HEX,
 	ELCP_CR,
@@ -304,8 +310,6 @@ _lws_destroy_ah(struct lws_context_per_thread *pt, struct allocated_headers *ah)
 int
 lws_http_proxy_start(struct lws *wsi, const struct lws_http_mount *hit,
 		     char *uri_ptr, char ws);
-
-typedef struct lws_sorted_usec_list lws_sorted_usec_list_t;
 
 void
 lws_sul_http_ah_lifecheck(lws_sorted_usec_list_t *sul);

@@ -208,7 +208,9 @@ lws_wsi_server_new(struct lws_vhost *vh, struct lws *parent_wsi,
 	if (lws_ensure_user_space(wsi))
 		goto bail1;
 
+#if defined(LWS_WITH_SERVER_STATUS)
 	wsi->vhost->conn_stats.h2_subs++;
+#endif
 
 	lwsl_info("%s: %p new ch %p, sid %d, usersp=%p, tx cr %d, "
 		  "peer_credit %d (nwsi tx_cr %d)\n",
@@ -248,7 +250,7 @@ lws_wsi_h2_adopt(struct lws *parent_wsi, struct lws *wsi)
 	/* sid is set just before issuing the headers, ensuring monoticity */
 
 	wsi->seen_nonpseudoheader = 0;
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 	wsi->client_h2_substream = 1;
 #endif
 	wsi->h2.initialized = 1;
@@ -273,7 +275,9 @@ lws_wsi_h2_adopt(struct lws *parent_wsi, struct lws *wsi)
 
 	lws_callback_on_writable(wsi);
 
+#if defined(LWS_WITH_SERVER_STATUS)
 	wsi->vhost->conn_stats.h2_subs++;
+#endif
 
 	return wsi;
 
@@ -685,7 +689,9 @@ int lws_h2_do_pps_send(struct lws *wsi)
 		/* this is the end of the preface dance then? */
 		if (lwsi_state(wsi) == LRS_H2_AWAIT_SETTINGS) {
 			lwsi_set_state(wsi, LRS_ESTABLISHED);
+#if defined(LWS_WITH_FILE_OPS)
 			wsi->http.fop_fd = NULL;
+#endif
 			if (lws_is_ssl(lws_get_network_wsi(wsi)))
 				break;
 			/*
@@ -711,11 +717,13 @@ int lws_h2_do_pps_send(struct lws *wsi)
 			h2n->swsi->h2.END_STREAM = 1;
 			lwsl_info("servicing initial http request\n");
 
+#if defined(LWS_WITH_SERVER_STATUS)
 			wsi->vhost->conn_stats.h2_trans++;
-
+#endif
+#if defined(LWS_WITH_SERVER)
 			if (lws_http_action(h2n->swsi))
 				goto bail;
-
+#endif
 			break;
 		}
 		break;
@@ -875,7 +883,7 @@ lws_h2_parse_frame_header(struct lws *wsi)
 		/* if it's data, either way no swsi means CLOSED state */
 		if (h2n->type == LWS_H2_FRAME_TYPE_DATA) {
 			if (h2n->sid <= h2n->highest_sid_opened
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 					&& wsi->client_h2_alpn
 #endif
 			) {
@@ -1078,7 +1086,7 @@ lws_h2_parse_frame_header(struct lws *wsi)
 			return 1;
 		}
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		if (wsi->client_h2_alpn) {
 			if (h2n->sid) {
 				h2n->swsi = lws_h2_wsi_from_id(wsi, h2n->sid);
@@ -1263,14 +1271,15 @@ lws_h2_parse_end_of_frame(struct lws *wsi)
 
 	case LWS_H2_FRAME_TYPE_SETTINGS:
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		if (wsi->client_h2_alpn &&
 		    !(h2n->flags & LWS_H2_FLAG_SETTINGS_ACK)) {
 			struct lws_h2_protocol_send *pps;
 
 			/* migrate original client ask on to substream 1 */
-
+#if defined(LWS_WITH_FILE_OPS)
 			wsi->http.fop_fd = NULL;
+#endif
 
 			/*
 			 * we need to treat the headers from the upgrade as the
@@ -1394,12 +1403,10 @@ lws_h2_parse_end_of_frame(struct lws *wsi)
 		lwsl_info("http req, wsi=%p, h2n->swsi=%p\n", wsi, h2n->swsi);
 		h2n->swsi->hdr_parsing_completed = 1;
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		if (h2n->swsi->client_h2_substream) {
 			if (lws_client_interpret_server_handshake(h2n->swsi)) {
-				lws_h2_rst_stream(h2n->swsi,
-						  H2_ERR_STREAM_CLOSED,
-						  "protocol CLI_EST closed it");
+				lwsl_info("%s: cli int serv hs closed it\n", __func__);
 				break;
 			}
 		}
@@ -1466,7 +1473,7 @@ lws_h2_parse_end_of_frame(struct lws *wsi)
 			break;
 		}
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		if (h2n->swsi->client_h2_substream) {
 			lwsl_info("%s: headers: client path\n", __func__);
 			break;
@@ -1500,7 +1507,9 @@ lws_h2_parse_end_of_frame(struct lws *wsi)
 		lws_http_compression_validate(h2n->swsi);
 #endif
 
+#if defined(LWS_WITH_SERVER_STATUS)
 		wsi->vhost->conn_stats.h2_trans++;
+#endif
 		p = lws_hdr_simple_ptr(h2n->swsi, WSI_TOKEN_HTTP_COLON_METHOD);
 		/*
 		 * duplicate :path into the individual method uri header
@@ -1543,7 +1552,7 @@ lws_h2_parse_end_of_frame(struct lws *wsi)
 		    h2n->swsi->h2.h2_state == LWS_H2_STATE_HALF_CLOSED_LOCAL)
 			lws_h2_state(h2n->swsi, LWS_H2_STATE_CLOSED);
 
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 		/*
 		 * client... remote END_STREAM implies we weren't going to
 		 * send anything else anyway.
@@ -1899,9 +1908,12 @@ lws_h2_parser(struct lws *wsi, unsigned char *in, lws_filepos_t inlen,
 					n = h2n->length - h2n->count + 1;
 					lwsl_debug("---- restricting len to %d vs %ld\n", n, (long)inlen + 1);
 				}
-#if !defined(LWS_NO_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 				if (h2n->swsi->client_h2_substream) {
-
+					if (!h2n->swsi->protocol) {
+						lwsl_err("%s: swsi %pdoesn't have protocol\n", __func__, h2n->swsi);
+						m = 1;
+					} else
 					m = user_callback_handle_rxflow(
 						h2n->swsi->protocol->callback,
 						h2n->swsi,
@@ -2230,8 +2242,10 @@ lws_h2_client_handshake(struct lws *wsi)
 	if (lws_finalize_http_header(wsi, &p, end))
 		goto fail_length;
 
-	n = lws_write(wsi, start, p - start,
-		      LWS_WRITE_HTTP_HEADERS);
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
+	n = lws_write(wsi, start, p - start, LWS_WRITE_HTTP_HEADERS);
 	if (n != (p - start)) {
 		lwsl_err("_write returned %d from %ld\n", n,
 			 (long)(p - start));

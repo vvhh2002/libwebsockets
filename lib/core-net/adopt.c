@@ -72,6 +72,11 @@ lws_create_new_server_wsi(struct lws_vhost *vhost, int fixed_tsi)
 	new_wsi->pending_timeout = NO_PENDING_TIMEOUT;
 	new_wsi->rxflow_change_to = LWS_RXFLOW_ALLOW;
 
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	if (vhost->context->detailed_latency_cb)
+		new_wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
+
 	/* initialize the instance struct */
 
 	lwsi_set_state(new_wsi, LRS_UNCONNECTED);
@@ -240,7 +245,7 @@ lws_adopt_descriptor_vhost(struct lws_vhost *vh, lws_adoption_type type,
 		}
 		lws_pt_unlock(pt);
 	}
-#if !defined(LWS_WITHOUT_SERVER)
+#if defined(LWS_WITH_SERVER)
 	 else
 		if (lws_server_socket_service_ssl(new_wsi, fd.sockfd)) {
 			lwsl_info("%s: fail ssl negotiation\n", __func__);
@@ -400,7 +405,7 @@ lws_create_adopt_udp(struct lws_vhost *vhost, int port, int flags,
 	lws_snprintf(buf, sizeof(buf), "%u", port);
 	n = getaddrinfo(NULL, buf, &h, &r);
 	if (n) {
-#ifndef LWS_WITH_ESP32
+#if !defined(LWS_PLAT_FREERTOS)
 		lwsl_info("%s: getaddrinfo error: %s\n", __func__, gai_strerror(n));
 #else
         lwsl_info("%s: getaddrinfo error: %s\n", __func__, strerror(n));

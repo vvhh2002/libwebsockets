@@ -95,6 +95,9 @@ lws_finalize_write_http_header(struct lws *wsi, unsigned char *start,
 	p = *pp;
 	len = lws_ptr_diff(p, start);
 
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
 	if (lws_write(wsi, start, len, LWS_WRITE_HTTP_HEADERS) != len)
 		return 1;
 
@@ -139,6 +142,8 @@ lws_add_http_header_content_length(struct lws *wsi,
 
 	return 0;
 }
+
+#if defined(LWS_WITH_SERVER)
 
 int
 lws_add_http_common_headers(struct lws *wsi, unsigned int code,
@@ -312,8 +317,9 @@ lws_add_http_header_status(struct lws *wsi, unsigned int _code,
 		else
 			p1 = hver[0];
 
-		n = lws_snprintf((char *)code_and_desc, sizeof(code_and_desc) - 1, "%s %u %s", p1, code,
-			    description);
+		n = lws_snprintf((char *)code_and_desc,
+				 sizeof(code_and_desc) - 1, "%s %u %s",
+				 p1, code, description);
 
 		if (lws_add_http_header_by_name(wsi, NULL, code_and_desc, n, p,
 						end))
@@ -443,6 +449,9 @@ lws_return_http_status(struct lws *wsi, unsigned int code,
 		 *
 		 * Solve it by writing the headers now...
 		 */
+#if defined(LWS_WITH_DETAILED_LATENCY)
+		wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
 		m = lws_write(wsi, start, lws_ptr_diff(p, start),
 			      LWS_WRITE_HTTP_HEADERS);
 		if (m != lws_ptr_diff(p, start))
@@ -513,6 +522,7 @@ lws_http_redirect(struct lws *wsi, int code, const unsigned char *loc, int len,
 	return lws_write(wsi, start, *p - start, LWS_WRITE_HTTP_HEADERS |
 						 LWS_WRITE_H2_STREAM_END);
 }
+#endif
 
 #if !defined(LWS_WITH_HTTP_STREAM_COMPRESSION)
 LWS_VISIBLE int
@@ -534,6 +544,8 @@ lws_http_headers_detach(struct lws *wsi)
 {
 	return lws_header_table_detach(wsi, 0);
 }
+
+#if defined(LWS_WITH_SERVER)
 
 void
 lws_sul_http_ah_lifecheck(lws_sorted_usec_list_t *sul)
@@ -617,3 +629,4 @@ lws_sul_http_ah_lifecheck(lws_sorted_usec_list_t *sul)
 
 	lws_pt_unlock(pt);
 }
+#endif

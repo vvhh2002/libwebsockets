@@ -112,7 +112,6 @@ lws_role_call_alpn_negotiated(struct lws *wsi, const char *alpn)
 	return 0;
 }
 
-//#if !defined(LWS_WITHOUT_SERVER)
 int
 lws_role_call_adoption_bind(struct lws *wsi, int type, const char *prot)
 {
@@ -179,9 +178,8 @@ lws_role_call_adoption_bind(struct lws *wsi, int type, const char *prot)
 
 	return 1;
 }
-//#endif
 
-#if !defined(LWS_WITHOUT_CLIENT)
+#if defined(LWS_WITH_CLIENT)
 int
 lws_role_call_client_bind(struct lws *wsi,
 			  const struct lws_client_connect_info *i)
@@ -291,7 +289,7 @@ lws_protocol_init(struct lws_context *context)
 {
 	struct lws_vhost *vh = context->vhost_list;
 	const struct lws_protocol_vhost_options *pvo, *pvo1;
-	struct lws wsi;
+	struct lws *wsi = context->pt[0].fake_wsi;
 	int n, any = 0;
 
 	if (context->doing_protocol_init)
@@ -299,13 +297,12 @@ lws_protocol_init(struct lws_context *context)
 
 	context->doing_protocol_init = 1;
 
-	memset(&wsi, 0, sizeof(wsi));
-	wsi.context = context;
+	wsi->context = context;
 
 	lwsl_info("%s\n", __func__);
 
 	while (vh) {
-		wsi.vhost = vh;
+		wsi->vhost = vh;
 
 		/* only do the protocol init once for a given vhost */
 		if (vh->created_vhost_protocols ||
@@ -315,7 +312,7 @@ lws_protocol_init(struct lws_context *context)
 		/* initialize supported protocols on this vhost */
 
 		for (n = 0; n < vh->count_protocols; n++) {
-			wsi.protocol = &vh->protocols[n];
+			wsi->protocol = &vh->protocols[n];
 			if (!vh->protocols[n].name)
 				continue;
 			pvo = lws_vhost_protocol_options(vh,
@@ -368,7 +365,7 @@ lws_protocol_init(struct lws_context *context)
 			 * NOTE the wsi is all zeros except for the context, vh
 			 * + protocol ptrs so lws_get_context(wsi) etc can work
 			 */
-			if (vh->protocols[n].callback(&wsi,
+			if (vh->protocols[n].callback(wsi,
 					LWS_CALLBACK_PROTOCOL_INIT, NULL,
 					(void *)pvo, 0)) {
 				if (vh->protocol_vh_privs[n]) {
@@ -394,8 +391,10 @@ next:
 
 	context->protocol_init_done = 1;
 
+#if defined(LWS_WITH_SERVER)
 	if (any)
 		lws_tls_check_all_cert_lifetimes(context);
+#endif
 
 	return 0;
 }
@@ -440,8 +439,12 @@ lws_create_vhost(struct lws_context *context,
 	struct lws_protocols *lwsp;
 	int m, f = !info->pvo, fx = 0, abs_pcol_count = 0;
 	char buf[96];
-#if !defined(LWS_WITHOUT_CLIENT) && defined(LWS_HAVE_GETENV)
+#if defined(LWS_CLIENT_HTTP_PROXYING) && \
+    defined(LWS_WITH_CLIENT) && defined(LWS_HAVE_GETENV)
 	char *p;
+#endif
+#if defined(LWS_WITH_ASYNC_DNS)
+	extern struct lws_protocols lws_async_dns_protocol;
 #endif
 	int n;
 
@@ -469,8 +472,7 @@ lws_create_vhost(struct lws_context *context,
 		lwsl_info("%s set to only support RAW\n", vh->name);
 
 	vh->iface = info->iface;
-#if !defined(LWS_WITH_ESP32) && \
-    !defined(OPTEE_TA) && !defined(WIN32)
+#if !defined(LWS_PLAT_FREERTOS) && !defined(OPTEE_TA) && !defined(WIN32)
 	vh->bind_iface = info->bind_iface;
 #endif
 
@@ -558,6 +560,7 @@ lws_create_vhost(struct lws_context *context,
 	/*
 	 * give the vhost a unified list of protocols including:
 	 *
+	 * - internal, async_dns if enabled (first vhost only)
 	 * - internal, abstracted ones
 	 * - the ones that came from plugins
 	 * - his user protocols
@@ -591,6 +594,16 @@ lws_create_vhost(struct lws_context *context,
 	for (n = 0; n < abs_pcol_count; n++) {
 		memcpy(&lwsp[m++], available_abstract_protocols[n],
 		       sizeof(*lwsp));
+		vh->count_protocols++;
+	}
+#endif
+	/*
+	 * 3: async dns protocol (first vhost only)
+	 */
+#if defined(LWS_WITH_ASYNC_DNS)
+	if (!context->vhost_list) {
+		memcpy(&lwsp[m++], &lws_async_dns_protocol,
+		       sizeof(struct lws_protocols));
 		vh->count_protocols++;
 	}
 #endif
@@ -674,18 +687,17 @@ lws_create_vhost(struct lws_context *context,
 	}
 
 	vh->listen_port = info->port;
-#if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
-	vh->http.http_proxy_port = 0;
-	vh->http.http_proxy_address[0] = '\0';
-#endif
+
 #if defined(LWS_WITH_SOCKS5)
 	vh->socks_proxy_port = 0;
 	vh->socks_proxy_address[0] = '\0';
 #endif
 
-#if !defined(LWS_WITHOUT_CLIENT)
+#if defined(LWS_WITH_CLIENT) && defined(LWS_CLIENT_HTTP_PROXYING)
 	/* either use proxy from info, or try get it from env var */
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
+	vh->http.http_proxy_port = 0;
+	vh->http.http_proxy_address[0] = '\0';
 	/* http proxy */
 	if (info->http_proxy_address) {
 		/* override for backwards compatibility */
@@ -755,6 +767,7 @@ lws_create_vhost(struct lws_context *context,
 		lwsl_err("%s: lws_context_init_client_ssl failed\n", __func__);
 		goto bail1;
 	}
+#if defined(LWS_WITH_SERVER)
 	lws_context_lock(context, "create_vhost");
 	n = _lws_vhost_init_server(info, vh);
 	lws_context_unlock(context);
@@ -762,6 +775,8 @@ lws_create_vhost(struct lws_context *context,
 		lwsl_err("init server failed\n");
 		goto bail1;
 	}
+#endif
+	n = !!context->vhost_list;
 
 	while (1) {
 		if (!(*vh1)) {
@@ -770,6 +785,11 @@ lws_create_vhost(struct lws_context *context,
 		}
 		vh1 = &(*vh1)->vhost_next;
 	};
+
+#if defined(LWS_WITH_ASYNC_DNS)
+	if (!n && lws_async_dns_init(context))
+		goto bail1;
+#endif
 
 	/* for the case we are adding a vhost much later, after server init */
 
@@ -1093,7 +1113,10 @@ __lws_vhost_destroy2(struct lws_vhost *vh)
 	lws_ssl_SSL_CTX_destroy(vh);
 	lws_free(vh->same_vh_protocol_owner);
 
-	if (context->plugin_list ||
+	if (
+#if defined(LWS_WITH_PLUGINS)
+		context->plugin_list ||
+#endif
 	    (context->options & LWS_SERVER_OPTION_EXPLICIT_VHOSTS) ||
 	    vh->allocated_vhost_protocols)
 		lws_free((void *)vh->protocols);
@@ -1263,7 +1286,7 @@ lws_get_vhost_listen_port(struct lws_vhost *vhost)
 	return vhost->listen_port;
 }
 
-
+#if defined(LWS_WITH_SERVER)
 LWS_VISIBLE LWS_EXTERN void
 lws_context_deprecate(struct lws_context *context, lws_reload_func cb)
 {
@@ -1304,6 +1327,7 @@ lws_context_deprecate(struct lws_context *context, lws_reload_func cb)
 	context->deprecated = 1;
 	context->deprecation_cb = cb;
 }
+#endif
 
 #if defined(LWS_WITH_NETWORK)
 struct lws_vhost *
