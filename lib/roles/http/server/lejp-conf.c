@@ -45,6 +45,8 @@ static const char * const paths_global[] = {
 	"global.reject-service-keywords[].*",
 	"global.reject-service-keywords[]",
 	"global.default-alpn",
+	"global.ip-limit-ah",
+	"global.ip-limit-wsi",
 };
 
 enum lejp_global_paths {
@@ -61,6 +63,8 @@ enum lejp_global_paths {
 	LWJPGP_REJECT_SERVICE_KEYWORDS_NAME,
 	LWJPGP_REJECT_SERVICE_KEYWORDS,
 	LWJPGP_DEFAULT_ALPN,
+	LWJPGP_IP_LIMIT_AH,
+	LWJPGP_IP_LIMIT_WSI,
 };
 
 static const char * const paths_vhosts[] = {
@@ -128,6 +132,7 @@ static const char * const paths_vhosts[] = {
 	"vhosts[].allow-http-on-https",
 
 	"vhosts[].disable-no-protocol-ws-upgrades",
+	"vhosts[].h2-half-closed-long-poll",
 };
 
 enum lejp_vhost_paths {
@@ -195,6 +200,7 @@ enum lejp_vhost_paths {
 	LEJPVP_FLAG_ALLOW_HTTP_ON_HTTPS,
 
 	LEJPVP_FLAG_DISABLE_NO_PROTOCOL_WS_UPGRADES,
+	LEJPVP_FLAG_H2_HALF_CLOSED_LONG_POLL,
 };
 
 #define MAX_PLUGIN_DIRS 10
@@ -250,7 +256,7 @@ arg_to_bool(const char *s)
 }
 
 static void
-set_reset_flag(unsigned int *p, const char *state, unsigned int flag)
+set_reset_flag(uint64_t *p, const char *state, uint64_t flag)
 {
 	if (arg_to_bool(state))
 		*p |= flag;
@@ -331,6 +337,14 @@ lejp_globals_cb(struct lejp_ctx *ctx, char reason)
 	case LWJPGP_DEFAULT_ALPN:
 		a->info->alpn = a->p;
 		break;
+
+	case LWJPGP_IP_LIMIT_AH:
+		a->info->ip_limit_ah = atoi(ctx->buf);
+		return 0;
+
+	case LWJPGP_IP_LIMIT_WSI:
+		a->info->ip_limit_wsi = atoi(ctx->buf);
+		return 0;
 
 	default:
 		return 0;
@@ -850,6 +864,11 @@ lejp_vhosts_cb(struct lejp_ctx *ctx, char reason)
 
 	case LEJPVP_FLAG_DISABLE_NO_PROTOCOL_WS_UPGRADES:
 		a->reject_ws_with_no_protocol = 1;
+		return 0;
+
+	case LEJPVP_FLAG_H2_HALF_CLOSED_LONG_POLL:
+		set_reset_flag(&a->info->options, ctx->buf,
+				LWS_SERVER_OPTION_VH_H2_HALF_CLOSED_LONG_POLL);
 		return 0;
 
 	default:

@@ -234,7 +234,7 @@ failed:
 
 struct lws *
 lws_client_connect_3(struct lws *wsi, const char *ads,
-		     struct addrinfo *result, int n)
+		     struct addrinfo *result, int n, void *opaque)
 {
 #if defined(LWS_WITH_UNIX_SOCK)
 	struct sockaddr_un sau;
@@ -245,11 +245,19 @@ lws_client_connect_3(struct lws *wsi, const char *ads,
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 #endif
 #endif
+#ifdef LWS_WITH_IPV6
+	char ipv6only = lws_check_opt(wsi->vhost->options,
+			LWS_SERVER_OPTION_IPV6_V6ONLY_MODIFY |
+			LWS_SERVER_OPTION_IPV6_V6ONLY_VALUE);
+#if defined(__ANDROID__)
+	ipv6only = 0;
+#endif
+#endif
 	const char *cce = "", *iface;
 	const struct sockaddr *psa;
-	sockaddr46 sa46;
-	int port;
 	ssize_t plen = 0;
+	sockaddr46 sa46;
+	int port = 0;
 
 	if (lwsi_state(wsi) == LRS_WAITING_CONNECT) {
 		socklen_t sl = sizeof(int);
@@ -679,20 +687,13 @@ lws_client_connect_2(struct lws *wsi)
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
 	const char *adsin;
 #endif
-	int n, port = 0;
-	const char *cce = "";
-	const char *meth = NULL;
+	const char *cce = "", *meth = NULL, *ads;
 	struct addrinfo *result = NULL;
-	const char *ads;
-#ifdef LWS_WITH_IPV6
-	char ipv6only = lws_check_opt(wsi->vhost->options,
-			LWS_SERVER_OPTION_IPV6_V6ONLY_MODIFY |
-			LWS_SERVER_OPTION_IPV6_V6ONLY_VALUE);
+#if defined(LWS_WITH_IPV6)
 	struct sockaddr_in addr;
-#if defined(__ANDROID__)
-	ipv6only = 0;
+	const char *iface;
 #endif
-#endif
+	int n, port = 0;
 
 	if (lwsi_state(wsi) == LRS_WAITING_ASYNC_DNS) {
 		lwsl_notice("%s: LRS_WAITING_ASYNC_DNS\n", __func__);
@@ -865,7 +866,7 @@ create_new_conn:
 	wsi->ipv6 = LWS_IPV6_ENABLED(wsi->vhost);
 #ifdef LWS_WITH_IPV6
 	if (wsi->stash)
-		iface = wsi->stash->iface;
+		iface = wsi->stash->cis[CIS_IFACE];
 	else
 		iface = lws_hdr_simple_ptr(wsi, _WSI_TOKEN_CLIENT_IFACE);
 
@@ -914,6 +915,7 @@ create_new_conn:
 
 	lwsl_info("%s: %p: address %s:%u\n", __func__, wsi, ads, port);
 	(void)port;
+
 #if defined(LWS_WITH_DETAILED_LATENCY)
 	wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
 #endif
@@ -923,9 +925,18 @@ create_new_conn:
 #else
 	lwsi_set_state(wsi, LRS_WAITING_ASYNC_DNS);
 	/* this is either FAILED, CONTINUING, or already called connect_4 */
-	n = lws_async_dns_query(wsi, ads, LWS_ADNS_RECORD_A);
+#ifdef LWS_WITH_IPV6
+	n = lws_async_dns_query(wsi->context, wsi->tsi, ads,
+				LWS_IPV6_ENABLED(wsi->vhost) ?
+					LWS_ADNS_RECORD_AAAA :
+					LWS_ADNS_RECORD_A,
+#else
+	n = lws_async_dns_query(wsi->context, wsi->tsi, ads, LWS_ADNS_RECORD_A,
+#endif
+				lws_client_connect_3, wsi, NULL);
 	if (n == LADNS_RET_FAILED_WSI_CLOSED)
 		return NULL;
+
 	if (n == LADNS_RET_FAILED)
 		goto failed1;
 
@@ -935,7 +946,7 @@ create_new_conn:
 #if defined(LWS_WITH_UNIX_SOCK)
 next_step:
 #endif
-	return lws_client_connect_3(wsi, ads, result, n);
+	return lws_client_connect_3(wsi, ads, result, n, NULL);
 
 oom4:
 	if (lwsi_role_client(wsi) && wsi->protocol /* && lwsi_state_est(wsi) */)

@@ -338,4 +338,4 @@ lws_client_connect_4(struct lws *wsi, struct lws *wsi_piggyback, ssize_t plen);
 
 struct lws *
 lws_client_connect_3(struct lws *wsi, const char *ads,
-			struct addrinfo *result, int n);
+			struct addrinfo *result, int n, void *opaque);

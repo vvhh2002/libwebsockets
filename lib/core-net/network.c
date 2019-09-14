@@ -648,7 +648,8 @@ lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len)
 					return 16;
 				memcpy(temp, &orig[skip_point], ow - skip_point);
 				memset(&orig[skip_point], 0, 16 - skip_point);
-				memcpy(&orig[16 - (ow - skip_point)], temp, ow - skip_point);
+				memcpy(&orig[16 - (ow - skip_point)], temp,
+						   ow - skip_point);
 
 				return 16;
 			}
@@ -665,4 +666,72 @@ lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len)
 	lwsl_err("%s: ended on e %d\n", __func__, e);
 
 	return -14;
+}
+
+int
+lws_write_numeric_address(const uint8_t *ads, int size, char *buf, int len)
+{
+	char c, elided = 0, soe = 0, zb = -1, n, ipv4 = 0;
+	const char *e = buf + len;
+	char *obuf = buf;
+	int q = 0;
+
+	if (size == 4)
+		return lws_snprintf(buf, len, "%u.%u.%u.%u",
+				    ads[0], ads[1], ads[2], ads[3]);
+
+	if (size != 16)
+		return -1;
+
+	for (c = 0; c < 8; c++) {
+		uint16_t v = (ads[q] << 8) | ads[q + 1];
+
+		if (buf + 8 > e)
+			return -1;
+
+		q += 2;
+		if (soe) {
+			if (v)
+				*buf++ = ':';
+				/* fall thru to print hex value */
+		} else
+			if (!elided && !soe && !v) {
+				elided = soe = 1;
+				zb = c;
+				continue;
+			}
+
+		if (ipv4) {
+			n = lws_snprintf(buf, e - buf, "%u.%u",
+					ads[q - 2], ads[q - 1]);
+			buf += n;
+			if (c == 6)
+				*buf++ = '.';
+		} else {
+			if (soe && !v)
+				continue;
+			if (c)
+				*buf++ = ':';
+
+			buf += lws_snprintf(buf, e - buf, "%x", v);
+
+			if (soe && v) {
+				soe = 0;
+				if (c == 5 && v == 0xffff && !zb) {
+					ipv4 = 1;
+					*buf++ = ':';
+				}
+			}
+		}
+	}
+	if (buf + 3 > e)
+		return -1;
+
+	if (soe) { /* as is the case for all zeros */
+		*buf++ = ':';
+		*buf++ = ':';
+		*buf = '\0';
+	}
+
+	return buf - obuf;
 }

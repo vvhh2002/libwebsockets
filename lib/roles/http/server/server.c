@@ -1341,8 +1341,9 @@ lws_http_action(struct lws *wsi)
 	 * if there is content supposed to be coming,
 	 * put a timeout on it having arrived
 	 */
-	lws_set_timeout(wsi, PENDING_TIMEOUT_HTTP_CONTENT,
-			wsi->context->timeout_secs);
+	if (!wsi->h2_stream_immortal)
+		lws_set_timeout(wsi, PENDING_TIMEOUT_HTTP_CONTENT,
+				wsi->context->timeout_secs);
 #ifdef LWS_WITH_TLS
 	if (wsi->tls.redirect_to_https) {
 		/*
@@ -1517,7 +1518,7 @@ lws_http_action(struct lws *wsi)
 		if (lws_bind_protocol(wsi, pp, "http action CALLBACK bind"))
 			return 1;
 
-		lwsl_notice("%s: %s, checking access rights for mask 0x%x\n",
+		lwsl_debug("%s: %s, checking access rights for mask 0x%x\n",
 				__func__, hit->origin, hit->auth_mask);
 
 		args.p = uri_ptr;
@@ -1701,7 +1702,8 @@ deal_body:
 				if (m < 0)
 					return -1;
 
-				if (lws_buflist_aware_consume(wsi, &ebuf, m, 1))
+				if (lws_buflist_aware_finished_consuming(wsi,
+							&ebuf, m, 1, __func__))
 					return -1;
 			}
 		}
@@ -2265,7 +2267,7 @@ lws_http_transaction_completed(struct lws *wsi)
 	 * reset the existing header table and keep it.
 	 */
 	if (wsi->http.ah) {
-		// lws_buflist_describe(&wsi->buflist, wsi);
+		// lws_buflist_describe(&wsi->buflist, wsi, __func__);
 		if (!lws_buflist_next_segment_len(&wsi->buflist, NULL)) {
 			lwsl_debug("%s: %p: nothing in buflist, detaching ah\n",
 				  __func__, wsi);

@@ -179,7 +179,7 @@ rops_handle_POLLIN_h2(struct lws_context_per_thread *pt, struct lws *wsi,
 read:
 	/* 3: network wsi buflist needs to be drained */
 
-	// lws_buflist_describe(&wsi->buflist, wsi);
+	// lws_buflist_describe(&wsi->buflist, wsi, __func__);
 
 	ebuf.len = (int)lws_buflist_next_segment_len(&wsi->buflist,
 						&ebuf.token);
@@ -273,6 +273,7 @@ drain:
 		}
 
 		if (n && buffered) {
+			// lwsl_notice("%s: h2 use %d\n", __func__, n);
 			m = lws_buflist_use_segment(&wsi->buflist, n);
 			lwsl_info("%s: draining rxflow: used %d, next %d\n",
 				    __func__, n, m);
@@ -283,6 +284,7 @@ drain:
 			}
 		} else
 			if (n && n != ebuf.len) {
+				// lwsl_notice("%s: h2 append seg %d\n", __func__, ebuf.len - n);
 				m = lws_buflist_append_segment(&wsi->buflist,
 						ebuf.token + n,
 						ebuf.len - n);
@@ -291,13 +293,14 @@ drain:
 				if (m) {
 					lwsl_debug("%s: added %p to rxflow list\n",
 							__func__, wsi);
-					lws_dll2_add_head(&wsi->dll_buflist,
+					if (lws_dll2_is_detached(&wsi->dll_buflist))
+						lws_dll2_add_head(&wsi->dll_buflist,
 							 &pt->dll_buflist_owner);
 				}
 			}
 	}
 
-	// lws_buflist_describe(&wsi->buflist, wsi);
+	// lws_buflist_describe(&wsi->buflist, wsi, __func__);
 
 #if 0
 
@@ -383,20 +386,22 @@ rops_write_role_protocol_h2(struct lws *wsi, unsigned char *buf, size_t len,
 
 	/* if not in a state to send stuff, then just send nothing */
 
-	if (!lwsi_role_ws(wsi) &&
+	if (!lwsi_role_ws(wsi) && !wsi->h2_stream_immortal &&
 	    base != LWS_WRITE_HTTP &&
 	    base != LWS_WRITE_HTTP_FINAL &&
 	    base != LWS_WRITE_HTTP_HEADERS_CONTINUATION &&
 	    base != LWS_WRITE_HTTP_HEADERS &&
 	    ((lwsi_state(wsi) != LRS_RETURNED_CLOSE &&
 	      lwsi_state(wsi) != LRS_WAITING_TO_SEND_CLOSE &&
+	      lwsi_state(wsi) != LRS_ESTABLISHED &&
 	      lwsi_state(wsi) != LRS_AWAITING_CLOSE_ACK)
 #if defined(LWS_ROLE_WS)
 	   || base != LWS_WRITE_CLOSE
 #endif
 	)) {
 		//assert(0);
-		lwsl_notice("binning wsistate 0x%x %d\n", wsi->wsistate, *wp);
+		lwsl_notice("%s: binning wsistate 0x%x %d\n", __func__,
+				wsi->wsistate, *wp);
 		return 0;
 	}
 
@@ -483,7 +488,6 @@ static int
 rops_check_upgrades_h2(struct lws *wsi)
 {
 #if defined(LWS_ROLE_WS)
-	struct lws *nwsi;
 	char *p;
 
 	/*
@@ -501,21 +505,16 @@ rops_check_upgrades_h2(struct lws *wsi)
 	if (!p || strcmp(p, "websocket"))
 		return LWS_UPG_RET_CONTINUE;
 
-	nwsi = lws_get_network_wsi(wsi);
-
 #if defined(LWS_WITH_SERVER_STATUS)
 	wsi->vhost->conn_stats.ws_upg++;
 #endif
 	lwsl_info("Upgrade h2 to ws\n");
+	lws_http_mark_immortal(wsi);
 	wsi->h2_stream_carries_ws = 1;
-	nwsi->immortal_substream_count++;
+
 	if (lws_process_ws_upgrade(wsi))
 		return LWS_UPG_RET_BAIL;
 
-	if (nwsi->immortal_substream_count == 1)
-		lws_set_timeout(nwsi, NO_PENDING_TIMEOUT, 0);
-
-	lws_set_timeout(wsi, NO_PENDING_TIMEOUT, 0);
 	lwsl_info("Upgraded h2 to ws OK\n");
 
 	return LWS_UPG_RET_DONE;
@@ -630,9 +629,10 @@ rops_close_kill_connection_h2(struct lws *wsi, enum lws_close_status reason)
 
 	if (wsi->http2_substream && wsi->h2_stream_carries_ws)
 		lws_h2_rst_stream(wsi, 0, "none");
-	else
+/*	else
 		if (wsi->http2_substream)
 			lws_h2_rst_stream(wsi, H2_ERR_STREAM_CLOSED, "swsi got closed");
+*/
 
 	if (wsi->h2.parent_wsi && lwsl_visible(LLL_INFO)) {
 		lwsl_info(" wsi: %p, his parent %p: siblings:\n", wsi,
@@ -711,16 +711,6 @@ rops_close_kill_connection_h2(struct lws *wsi, enum lws_close_status reason)
 		wsi->h2.parent_wsi = NULL;
 		if (wsi->h2.pending_status_body)
 			lws_free_set_NULL(wsi->h2.pending_status_body);
-	}
-
-	if (wsi->h2_stream_carries_ws || wsi->h2_stream_carries_sse) {
-		struct lws *nwsi = lws_get_network_wsi(wsi);
-
-		nwsi->immortal_substream_count--;
-		/* if no ws, then put a timeout on the parent wsi */
-		if (!nwsi->immortal_substream_count)
-			__lws_set_timeout(nwsi,
-				PENDING_TIMEOUT_HTTP_KEEPALIVE_IDLE, 31);
 	}
 
 	return 0;
@@ -1144,6 +1134,30 @@ rops_perform_user_POLLOUT_h2(struct lws *wsi)
 			goto next_child;
 		}
 #endif
+
+		/*
+		 * set client wsi to immortal long-poll mode; send END_STREAM
+		 * flag on headers to indicate to a server, that allows
+		 * it, that you want them to leave the stream in a long poll
+		 * ro immortal state.  We have to send headers so the client
+		 * understands the http connection is ongoing.
+		 */
+
+		if (w->h2.send_END_STREAM && w->h2.long_poll) {
+			uint8_t buf[LWS_PRE + 1];
+			enum lws_write_protocol wp = 0;
+
+			if (!rops_write_role_protocol_h2(w, buf + LWS_PRE, 0,
+							 &wp)) {
+				lwsl_info("%s: wsi %p: entering ro long poll\n",
+					  __func__, w);
+				lws_http_mark_immortal(w);
+			} else
+				lwsl_err("%s: wsi %p: failed to set long poll\n",
+						__func__, w);
+			goto next_child;
+		}
+
 		if (lws_callback_as_writeable(w)) {
 			lwsl_info("Closing POLLOUT child (end stream %d)\n",
 				  w->h2.send_END_STREAM);

@@ -35,7 +35,7 @@ lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
 
 	d[0] = '\0';
 	if (__system_property_get("net.dns1", d) <= 0)
-		return LADNS_CONF_SERVER_UNKNOWN; 
+		return LADNS_CONF_SERVER_UNKNOWN;
 
 	for (n = 0; n < 4; n++) {
 		i[n] = atoi(d);
@@ -48,6 +48,6 @@ lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
 	n = ip32 == sa->sin_addr.s_addr;
 	sa->sin_addr.s_addr = ip32;
 
-	return n ? LADNS_CONF_SERVER_SAME : LADNS_CONF_SERVER_CHANGED; 
+	return n ? LADNS_CONF_SERVER_SAME : LADNS_CONF_SERVER_CHANGED;
 }
 

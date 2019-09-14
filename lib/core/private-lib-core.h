@@ -260,7 +260,7 @@ struct lws_deferred_free
 
 struct lws_context {
  #if defined(LWS_WITH_SERVER)
- 	char canonical_hostname[96];
+	char canonical_hostname[96];
  #endif
 
 #if defined(LWS_WITH_FILE_OPS)
@@ -381,6 +381,8 @@ struct lws_context {
 
 	lws_usec_t time_up; /* monotonic */
 
+	uint64_t options;
+
 	time_t last_ws_ping_pong_check_s;
 
 #if defined(LWS_PLAT_FREERTOS)
@@ -401,7 +403,6 @@ struct lws_context {
 #endif
 	int count_wsi_allocated;
 	int count_cgi_spawned;
-	unsigned int options;
 	unsigned int fd_limit_per_thread;
 	unsigned int timeout_secs;
 	unsigned int pt_serv_buf_size;
@@ -464,13 +465,9 @@ signed char char_to_hex(const char c);
 
 struct lws_buflist {
 	struct lws_buflist *next;
-
 	size_t len;
 	size_t pos;
-
-	uint8_t buf[1]; /* true length of this is set by the oversize malloc */
 };
-
 
 LWS_EXTERN char *
 lws_strdup(const char *s);

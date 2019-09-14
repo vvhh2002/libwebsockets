@@ -221,9 +221,18 @@ __lws_close_free_wsi(struct lws *wsi, enum lws_close_status reason,
 
 	lws_access_log(wsi);
 
+	if (!lws_dll2_is_detached(&wsi->dll_buflist)) {
+		lwsl_info("%s: wsi %p: going down with stuff in buflist\n",
+				__func__, wsi); }
+
 	context = wsi->context;
 	pt = &context->pt[(int)wsi->tsi];
 	lws_stats_bump(pt, LWSSTATS_C_API_CLOSE, 1);
+
+#if defined(LWS_WITH_HTTP2)
+	if (wsi->h2_stream_immortal)
+		lws_http_close_immortal(wsi);
+#endif
 
 	/* if we have children, close them first */
 	if (wsi->child_list) {

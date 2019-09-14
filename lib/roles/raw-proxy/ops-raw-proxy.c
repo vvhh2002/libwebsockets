@@ -54,7 +54,7 @@ rops_handle_POLLIN_raw_proxy(struct lws_context_per_thread *pt, struct lws *wsi,
 	    !(wsi->favoured_pollin &&
 	      (pollfd->revents & pollfd->events & LWS_POLLOUT))) {
 
-		buffered = lws_buflist_aware_read(pt, wsi, &ebuf);
+		buffered = lws_buflist_aware_read(pt, wsi, &ebuf, __func__);
 		switch (ebuf.len) {
 		case 0:
 			lwsl_info("%s: read 0 len\n", __func__);
@@ -86,7 +86,8 @@ rops_handle_POLLIN_raw_proxy(struct lws_context_per_thread *pt, struct lws *wsi,
 			goto fail;
 		}
 
-		if (lws_buflist_aware_consume(wsi, &ebuf, ebuf.len, buffered))
+		if (lws_buflist_aware_finished_consuming(wsi, &ebuf, ebuf.len,
+							 buffered, __func__))
 			return LWS_HPI_RET_PLEASE_CLOSE_ME;
 	} else
 		if (wsi->favoured_pollin &&
@@ -164,8 +165,9 @@ rops_client_bind_raw_proxy(struct lws *wsi,
 
 	/* we are a fallback if nothing else matched */
 
-//	lws_role_transition(wsi, LWSIFR_CLIENT, LRS_UNCONNECTED,
-//			    &role_ops_raw_proxy);
+	if (i->local_protocol_name && !strcmp(i->local_protocol_name, "raw-proxy"))
+		lws_role_transition(wsi, LWSIFR_CLIENT, LRS_UNCONNECTED,
+				    &role_ops_raw_proxy);
 
 	return 0;
 }
