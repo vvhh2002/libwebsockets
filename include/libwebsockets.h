@@ -569,6 +569,7 @@ struct lws;
 #include <libwebsockets/abstract/abstract.h>
 
 #include <libwebsockets/lws-test-sequencer.h>
+#include <libwebsockets/lws-async-dns.h>
 
 #if defined(LWS_WITH_TLS)
 

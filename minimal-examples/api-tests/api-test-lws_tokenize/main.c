@@ -299,6 +299,7 @@ int main(int argc, const char **argv)
 		int m = 0, in_fail = fail;
 		struct expected *exp = tests[n].exp;
 
+		memset(&ts, 0, sizeof(ts));
 		ts.start = tests[n].string;
 		ts.len = strlen(ts.start);
 		ts.flags = tests[n].flags;
@@ -400,7 +401,6 @@ int main(int argc, const char **argv)
 
 		printf("\t}\n");
 	}
-
 
 	lwsl_user("Completed: PASS: %d, FAIL: %d\n", ok, fail);
 

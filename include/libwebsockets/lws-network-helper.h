@@ -103,4 +103,10 @@ LWS_VISIBLE LWS_EXTERN int
 lws_interface_to_sa(int ipv6, const char *ifname, struct sockaddr_in *addr,
 		    size_t addrlen);
 #endif
+
+LWS_VISIBLE LWS_EXTERN int
+lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len);
+
+LWS_VISIBLE LWS_EXTERN int
+lws_write_numeric_address(const uint8_t *ads, int size, char *buf, int len);
 ///@}
