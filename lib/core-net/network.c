@@ -812,3 +812,53 @@ lws_sa46_compare_ads(const lws_sockaddr46 *sa46a, const lws_sockaddr46 *sa46b)
 
 	return sa46a->sa4.sin_addr.s_addr != sa46b->sa4.sin_addr.s_addr;
 }
+
+lws_system_states_t
+lws_system_state(struct lws_context *context)
+{
+	return context->system_state;
+}
+
+void
+lws_system_reg_notifier(struct lws_context *context,
+			lws_system_notify_link_t *notify_link)
+{
+	lws_dll2_add_head(&notify_link->list, &context->notify_owner);
+}
+
+static int
+_lws_system_transition(struct lws_context *context,
+		      lws_system_states_t target)
+{
+	lws_start_foreach_dll(struct lws_dll2 *, d,
+				context->notify_owner.head) {
+		lws_system_notify_link_t *l =
+			lws_container_of(d, lws_system_notify_link_t, list);
+		if (l->notify_cb(context, context->system_state, target))
+			/* a dependency took responsibility for retry */
+			return 1;
+
+	} lws_end_foreach_dll(d);
+
+	lwsl_info("%s: %d -> %d\n", __func__, context->system_state, target);
+	context->system_state = target;
+
+	return 0;
+}
+
+int
+lws_system_try_state_transition(struct lws_context *context,
+				lws_system_states_t target)
+{
+	int n;
+
+	if (context->system_state == LWS_SYSTATE_POLICY_INVALID ||
+	    target == LWS_SYSTATE_POLICY_INVALID)
+		return _lws_system_transition(context, target);
+
+	do {
+		n = _lws_system_transition(context, context->system_state + 8);
+	} while (!n && context->system_state != target);
+
+	return 0;
+}

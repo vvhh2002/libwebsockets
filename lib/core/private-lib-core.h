@@ -309,6 +309,8 @@ struct lws_context {
 	lws_async_dns_t		async_dns;
 #endif
 
+	lws_dll2_owner_t notify_owner; /* lists lws_system_notify_link_t */
+
 	/* pointers */
 
 	struct lws_vhost *vhost_list;
@@ -400,6 +402,9 @@ struct lws_context {
 	pid_t started_with_parent;
 #endif
 	int uid, gid;
+#if defined(LWS_WITH_NETWORK)
+	lws_system_states_t system_state;
+#endif
 
 	int fd_random;
 #if defined(LWS_WITH_DETAILED_LATENCY)

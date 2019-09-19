@@ -571,6 +571,10 @@ lws_create_context(const struct lws_context_creation_info *info)
 			goto bail;
 
 #if defined(LWS_WITH_NETWORK)
+	lws_system_try_state_transition(context, LWS_SYSTATE_CONTEXT_CREATED);
+#endif
+
+#if defined(LWS_WITH_NETWORK)
 	/* expedite post-context init (eg, protocols) */
 	lws_cancel_service(context);
 #endif
@@ -910,4 +914,3 @@ lws_context_destroy(struct lws_context *context)
 
 	lws_context_destroy2(context);
 }
-

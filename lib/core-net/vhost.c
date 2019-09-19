@@ -391,6 +391,16 @@ next:
 
 	context->protocol_init_done = 1;
 
+	/*
+	 * Let's go as far as we can towards operational unless a notifier
+	 * knows about a dependency.  On a system with no notifier handlers
+	 * this will take us straight there.
+	 */
+
+#if defined(LWS_WITH_NETWORK)
+	lws_system_try_state_transition(context, LWS_SYSTATE_OPERATIONAL);
+#endif
+
 #if defined(LWS_WITH_SERVER)
 	if (any)
 		lws_tls_check_all_cert_lifetimes(context);
