@@ -561,9 +561,10 @@ int
 lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len)
 {
 	struct lws_tokenize ts;
-	lws_tokenize_elem e;
 	uint8_t *orig = result, temp[16];
-	int sects = 0, ipv6 = !!strchr(ads, ':'), u, skip_point = -1, dm = 0;
+	int sects = 0, ipv6 = !!strchr(ads, ':'), skip_point = -1, dm = 0, n;
+	char t[5];
+	long u;
 
 	lws_tokenize_init(&ts, ads, LWS_TOKENIZE_F_NO_INTEGERS |
 				    LWS_TOKENIZE_F_MINUS_NONTERM);
@@ -584,17 +585,33 @@ lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len)
 		memset(result, 0, max_len);
 
 	do {
-		e = lws_tokenize(&ts);
-		switch (e) {
+		ts.e = lws_tokenize(&ts);
+		switch (ts.e) {
 		case LWS_TOKZE_TOKEN:
 			dm = 0;
 			if (ipv6) {
-				u = strtol(ts.token, NULL, 16);
+				if (ts.token_len > 4)
+					return -1;
+				memcpy(t, ts.token, ts.token_len);
+				t[ts.token_len] = '\0';
+				for (n = 0; n < ts.token_len; n++)
+					if (t[n] < '0' || t[n] > 'f' ||
+					    (t[n] > '9' && t[n] < 'A') ||
+					    (t[n] > 'F' && t[n] < 'a'))
+						return -1;
+				u = strtol(t, NULL, 16);
 				if (u > 0xffff)
 					return -5;
 				*result++ = u >> 8;
 			} else {
-				u = strtol(ts.token, NULL, 10);
+				if (ts.token_len > 3)
+					return -1;
+				memcpy(t, ts.token, ts.token_len);
+				t[ts.token_len] = '\0';
+				for (n = 0; n < ts.token_len; n++)
+					if (t[n] < '0' || t[n] > '9')
+						return -1;
+				u = strtol(t, NULL, 10);
 				if (u > 0xff)
 					return -6;
 			}
@@ -661,11 +678,41 @@ lws_parse_numeric_address(const char *ads, uint8_t *result, size_t max_len)
 
 			return -13;
 		}
-	} while (e > 0 && result - orig <= (int)max_len);
+	} while (ts.e > 0 && result - orig <= (int)max_len);
 
-	lwsl_err("%s: ended on e %d\n", __func__, e);
+	lwsl_err("%s: ended on e %d\n", __func__, ts.e);
 
 	return -14;
+}
+
+int
+lws_sa46_parse_numeric_address(const char *ads, lws_sockaddr46 *sa46)
+{
+	uint8_t a[16];
+	int n;
+
+	n = lws_parse_numeric_address(ads, a, sizeof(a));
+	if (n < 0)
+		return -1;
+
+#if defined(LWS_WITH_IPV6)
+	if (n == 16) {
+		sa46->sa6.sin6_family = AF_INET6;
+		memcpy(sa46->sa6.sin6_addr.s6_addr, a,
+		       sizeof(sa46->sa6.sin6_addr.s6_addr));
+
+		return 0;
+	}
+#endif
+
+	if (n != 4)
+		return -1;
+
+	sa46->sa4.sin_family = AF_INET;
+	memcpy(&sa46->sa4.sin_addr.s_addr, a,
+	       sizeof(sa46->sa4.sin_addr.s_addr));
+
+	return 0;
 }
 
 int
@@ -683,7 +730,7 @@ lws_write_numeric_address(const uint8_t *ads, int size, char *buf, int len)
 	if (size != 16)
 		return -1;
 
-	for (c = 0; c < 8; c++) {
+	for (c = 0; c < size / 2; c++) {
 		uint16_t v = (ads[q] << 8) | ads[q + 1];
 
 		if (buf + 8 > e)
@@ -734,4 +781,84 @@ lws_write_numeric_address(const uint8_t *ads, int size, char *buf, int len)
 	}
 
 	return buf - obuf;
+}
+
+int
+lws_sa46_write_numeric_address(lws_sockaddr46 *sa46, char *buf, int len)
+{
+	*buf = '\0';
+#if defined(LWS_WITH_IPV6)
+	if (sa46->sa4.sin_family == AF_INET6)
+		return lws_write_numeric_address(
+				(uint8_t *)&sa46->sa6.sin6_addr, 16, buf, len);
+#endif
+	if (sa46->sa4.sin_family == AF_INET)
+		return lws_write_numeric_address(
+				(uint8_t *)&sa46->sa4.sin_addr, 4, buf, len);
+
+	return -1;
+}
+
+int
+lws_sa46_compare_ads(const lws_sockaddr46 *sa46a, const lws_sockaddr46 *sa46b)
+{
+	if (sa46a->sa4.sin_family != sa46b->sa4.sin_family)
+		return 1;
+
+#if defined(LWS_WITH_IPV6)
+	if (sa46a->sa4.sin_family == AF_INET6)
+		return memcmp(&sa46a->sa6.sin6_addr, &sa46b->sa6.sin6_addr, 16);
+#endif
+
+	return sa46a->sa4.sin_addr.s_addr != sa46b->sa4.sin_addr.s_addr;
+}
+
+lws_system_states_t
+lws_system_state(struct lws_context *context)
+{
+	return context->system_state;
+}
+
+void
+lws_system_reg_notifier(struct lws_context *context,
+			lws_system_notify_link_t *notify_link)
+{
+	lws_dll2_add_head(&notify_link->list, &context->notify_owner);
+}
+
+static int
+_lws_system_transition(struct lws_context *context,
+		      lws_system_states_t target)
+{
+	lws_start_foreach_dll(struct lws_dll2 *, d,
+				context->notify_owner.head) {
+		lws_system_notify_link_t *l =
+			lws_container_of(d, lws_system_notify_link_t, list);
+		if (l->notify_cb(context, context->system_state, target))
+			/* a dependency took responsibility for retry */
+			return 1;
+
+	} lws_end_foreach_dll(d);
+
+	lwsl_info("%s: %d -> %d\n", __func__, context->system_state, target);
+	context->system_state = target;
+
+	return 0;
+}
+
+int
+lws_system_try_state_transition(struct lws_context *context,
+				lws_system_states_t target)
+{
+	int n;
+
+	if (context->system_state == LWS_SYSTATE_POLICY_INVALID ||
+	    target == LWS_SYSTATE_POLICY_INVALID)
+		return _lws_system_transition(context, target);
+
+	do {
+		n = _lws_system_transition(context, context->system_state + 8);
+	} while (!n && context->system_state != target);
+
+	return 0;
 }

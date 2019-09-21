@@ -12,7 +12,8 @@
 #include <libwebsockets.h>
 #include <signal.h>
 
-static int interrupted, dtest, ok, fail;
+static int interrupted, dtest, ok, fail, exp = 26;
+struct lws_context *context;
 
 /*
  * These are used to test the apis to parse and print ipv4 / ipv6 literal
@@ -51,6 +52,12 @@ static const struct ipparser_tests {
 	{ "cats", -1, "", 0,
 			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } },
 
+	{ "onevalid.bogus.warmcat.com", -1, "", 0,
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } },
+
+	{ "1.cat.dog.com", -1, "", 0,
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } },
+
 	{ ":::1", -8, "", 0,
 			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } },
 
@@ -70,66 +77,124 @@ static const struct async_dns_tests {
 		{ 46, 105, 127, 147, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, } },
 	{ "libwebsockets.org", LWS_ADNS_RECORD_A, 4,
 		{ 46, 105, 127, 147, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, } },
+	{ "doesntexist", LWS_ADNS_RECORD_A, 0,
+		{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, } },
+	{ "localhost", LWS_ADNS_RECORD_A, 4,
+		{ 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, } },
+	{ "ipv4only.warmcat.com", LWS_ADNS_RECORD_A, 4,
+		{ 46, 105, 127, 147, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, } },
+	{ "onevalid.bogus.warmcat.com", LWS_ADNS_RECORD_A, 4,
+		{ 46, 105, 127, 147, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, } },
+#if defined(LWS_WITH_IPV6)
 	{ "warmcat.com", LWS_ADNS_RECORD_AAAA, 16, /* check ipv6 */
 		{ 0x20, 0x01, 0x41, 0xd0, 0x00, 0x02, 0xee, 0x93,
 				0, 0, 0, 0, 0, 0, 0, 0, } },
+	{ "ipv6only.warmcat.com", LWS_ADNS_RECORD_AAAA, 16, /* check ipv6 */
+		{ 0x20, 0x01, 0x41, 0xd0, 0x00, 0x02, 0xee, 0x93,
+				0, 0, 0, 0, 0, 0, 0, 0, } },
+#endif
 };
+
+static lws_sorted_usec_list_t sul;
+
+struct lws *
+cb1(struct lws *wsi_unused, const char *ads, const struct addrinfo *a, int n,
+    void *opaque);
+
+static void
+next_test_cb(lws_sorted_usec_list_t *sul)
+{
+	int m;
+
+	lwsl_notice("%s: querying %s\n", __func__, adt[dtest].dns_name);
+
+	m = lws_async_dns_query(context, 0,
+				adt[dtest].dns_name,
+				adt[dtest].recordtype, cb1, NULL,
+				context);
+	if (m != LADNS_RET_CONTINUING && m != LADNS_RET_FOUND) {
+		lwsl_err("%s: adns 1 failed: %d\n", __func__, m);
+		interrupted = 1;
+	}
+}
 
 
 struct lws *
-cb1(struct lws *wsi_unused, const char *ads, struct addrinfo *a, int n,
+cb1(struct lws *wsi_unused, const char *ads, const struct addrinfo *a, int n,
     void *opaque)
 {
-	int alen = a->ai_addrlen == sizeof(struct sockaddr_in) ? 4 : 16;
+	const struct addrinfo *ac = a;
+	int ctr = 0, alen;
 	uint8_t *addr;
 	char buf[64];
-	int m;
-
-	if (alen == 4)
-		addr = (uint8_t *)&(((struct sockaddr_in *)a->ai_addr)->
-							sin_addr.s_addr);
-	else
-		addr = (uint8_t *)&(((struct sockaddr_in6 *)a->ai_addr)->
-							sin6_addr.s6_addr);
-
-	strcpy(buf, "unknown");
-	lws_write_numeric_address(addr, alen, buf, sizeof(buf));
-
-	lwsl_info("%s: %s %d %s\n", __func__, ads, alen, buf);
 
 	dtest++;
 
-	if (alen != adt[dtest - 1].addrlen) {
-		lwsl_warn("%s: dns test %d: alen mismatch %d %d\n", __func__,
-			  dtest, alen, adt[dtest - 1].addrlen);
-		fail++;
+	if (!ac)
+		lwsl_warn("%s: no results\n", __func__);
+
+	/* dump the results */
+
+	while (ac) {
+		if (ac->ai_family == AF_INET) {
+			addr = (uint8_t *)&(((struct sockaddr_in *)
+					ac->ai_addr)->sin_addr.s_addr);
+			alen = 4;
+		} else {
+			addr = (uint8_t *)&(((struct sockaddr_in6 *)
+					ac->ai_addr)->sin6_addr.s6_addr);
+			alen = 16;
+		}
+		strcpy(buf, "unknown");
+		lws_write_numeric_address(addr, alen, buf, sizeof(buf));
+
+		lwsl_warn("%s: %d: %s %d %s\n", __func__, ctr++, ads, alen, buf);
+
+		ac = ac->ai_next;
+	}
+
+	ac = a;
+	while (ac) {
+		if (ac->ai_family == AF_INET) {
+			addr = (uint8_t *)&(((struct sockaddr_in *)
+					ac->ai_addr)->sin_addr.s_addr);
+			alen = 4;
+		} else {
+#if defined(LWS_WITH_IPV6)
+			addr = (uint8_t *)&(((struct sockaddr_in6 *)
+					ac->ai_addr)->sin6_addr.s6_addr);
+			alen = 16;
+#else
+			goto again;
+#endif
+		}
+		if (alen == adt[dtest - 1].addrlen &&
+		    !memcmp(adt[dtest - 1].ads, addr, alen)) {
+			ok++;
+			goto next;
+		}
+#if !defined(LWS_WITH_IPV6)
+again:
+#endif
+		ac = ac->ai_next;
+	}
+
+	/* testing for NXDOMAIN? */
+
+	if (!a && !adt[dtest - 1].addrlen) {
+		ok++;
 		goto next;
 	}
 
-	if (memcmp(adt[dtest - 1].ads, addr, alen)) {
-		lwsl_warn("%s: dns test %d: addr mismatch\n", __func__, dtest);
-		lwsl_hexdump_notice(addr, alen);
-		lwsl_hexdump_notice(adt[dtest - 1].ads, alen);
-		fail++;
-		goto next;
-	}
-
-	ok++;
+	lwsl_err("%s: dns test %d: no match\n", __func__, dtest);
+	fail++;
 
 next:
+	lws_async_dns_freeaddrinfo(a);
 	if (dtest == (int)LWS_ARRAY_SIZE(adt))
 		interrupted = 1;
-	else {
-		m = lws_async_dns_query((struct lws_context *)opaque, 0,
-					adt[dtest].dns_name,
-					adt[dtest].recordtype, cb1, NULL,
-					opaque);
-		if (m != LADNS_RET_CONTINUING) {
-			lwsl_err("%s: adns 1 failed: %d\n", __func__, m);
-			fail++;
-			interrupted = 1;
-		}
-	}
+	else
+		lws_sul_schedule(context, 0, &sul, next_test_cb, 1);
 
 	return NULL;
 }
@@ -143,9 +208,8 @@ void sigint_handler(int sig)
 int
 main(int argc, const char **argv)
 {
-	int m, n = 1, logs = LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE;
+	int n = 1, logs = LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE;
 	struct lws_context_creation_info info;
-	struct lws_context *context;
 	const char *p;
 
 	/* the normal lws init */
@@ -225,14 +289,13 @@ main(int argc, const char **argv)
 		ok++;
 	}
 
+#if !defined(LWS_WITH_IPV6)
+	exp -= 2;
+#endif
+
 	/* kick off the async dns tests */
 
-	m = lws_async_dns_query(context, 0, adt[0].dns_name,
-				adt[0].recordtype, cb1, NULL, context);
-	if (m != LADNS_RET_CONTINUING) {
-		lwsl_err("%s: adns 1 failed: %d\n", __func__, m);
-		goto bail;
-	}
+	lws_sul_schedule(context, 0, &sul, next_test_cb, 1);
 
 	/* the usual lws event loop */
 
@@ -240,10 +303,13 @@ main(int argc, const char **argv)
 	while (n >= 0 && !interrupted)
 		n = lws_service(context, 0);
 
-bail:
 	lws_context_destroy(context);
 
-	lwsl_user("Completed: PASS: %d, FAIL: %d\n", ok, fail);
+	if (fail || ok != exp)
+		lwsl_user("Completed: PASS: %d / %d, FAIL: %d\n", ok, exp,
+				fail);
+	else
+		lwsl_user("Completed: ALL PASS: %d / %d\n", ok, exp);
 
-	return !(ok && !fail);
+	return !(ok == exp && !fail);
 }

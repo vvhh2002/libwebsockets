@@ -15,9 +15,7 @@ Relicensed to MIT:
 
   - lib/misc/daemonize.c               - relicensed from Public Domain to MIT,
                                          link to original Public Domain version
-  - lib/async-dns/*                    - relicensed from "Beerware v42" to MIT
-    lib/plat/unix/unix-resolv.c
-    lib/plat/windows/windows-resolv.c
+  - lib/plat/windows/windows-resolv.c  - relicensed from "Beerware v42" to MIT
 
 Public Domain (CC-zero) to simplify reuse:
 

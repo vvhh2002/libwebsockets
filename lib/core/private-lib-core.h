@@ -22,6 +22,9 @@
  * IN THE SOFTWARE.
  */
 
+#if !defined(__LWS_PRIVATE_LIB_CORE_H__)
+#define __LWS_PRIVATE_LIB_CORE_H__
+
 #include "lws_config.h"
 #include "lws_config_private.h"
 
@@ -274,6 +277,7 @@ struct lws_context {
 #if defined(LWS_WITH_NETWORK)
 
 	struct lws_context_per_thread pt[LWS_MAX_SMP];
+	lws_retry_bo_t	default_retry;
 
 #if defined(LWS_WITH_HTTP2)
 	struct http2_settings set;
@@ -304,6 +308,8 @@ struct lws_context {
 #if defined(LWS_WITH_ASYNC_DNS)
 	lws_async_dns_t		async_dns;
 #endif
+
+	lws_dll2_owner_t notify_owner; /* lists lws_system_notify_link_t */
 
 	/* pointers */
 
@@ -396,6 +402,9 @@ struct lws_context {
 	pid_t started_with_parent;
 #endif
 	int uid, gid;
+#if defined(LWS_WITH_NETWORK)
+	lws_system_states_t system_state;
+#endif
 
 	int fd_random;
 #if defined(LWS_WITH_DETAILED_LATENCY)
@@ -631,4 +640,6 @@ lws_context_destroy2(struct lws_context *context);
 
 #ifdef __cplusplus
 };
+#endif
+
 #endif

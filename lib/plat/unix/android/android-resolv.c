@@ -26,7 +26,7 @@
 #include <sys/system_properties.h>
 
 lws_async_dns_server_check_t
-lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
+lws_plat_asyncdns_init(struct lws_context *context, lws_sockaddr46 *sa46)
 {
 	char d[PROP_VALUE_MAX], *p = d;
 	uint32_t ip32;
@@ -46,7 +46,8 @@ lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
 
 	ip32 = (i[0] << 24) | (i[1] << 16) | (i[2] << 8) | i[3];
 	n = ip32 == sa->sin_addr.s_addr;
-	sa->sin_addr.s_addr = ip32;
+	sa46->sa4.sin_family = AF_INET;
+	sa46->sa4.sin_addr.s_addr = ip32;
 
 	return n ? LADNS_CONF_SERVER_SAME : LADNS_CONF_SERVER_CHANGED;
 }

@@ -25,18 +25,18 @@
 #include "private-lib-core.h"
 
 lws_async_dns_server_check_t
-lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
+lws_plat_asyncdns_init(struct lws_context *context, lws_sockaddr46 *sa46)
 {
 	uint32_t ipv4;
+	lws_async_dns_server_check_t s = LADNS_CONF_SERVER_CHANGED;
 
 	FreeRTOS_GetAddressConfiguration(NULL, NULL, NULL, &ipv4);
 
-	lwsl_notice("dns server %d.%d.%d.%d\n",
-			(uint8_t)(ipv4 >> 24), (uint8_t)(ipv4 >> 16),
-			(uint8_t)(ipv4 >> 8), (uint8_t)ipv4);
+	sa46->sa4.sin_family = AF_INET;
+	if (sa46->sa4.sin_addr.s_addr == ipv4)
+		s = LADNS_CONF_SERVER_SAME;
 
-	sa->sin_addr.s_addr = ipv4;
+	sa46->sa4.sin_addr.s_addr = ipv4;
 
-	return 1;
+	return s;
 }
-

@@ -87,44 +87,44 @@ enum lwsi_state {
 	/* Phase 1: pre-transport */
 
 	LRS_UNCONNECTED				= LWSIFS_NOT_EST | 0,
-	LRS_WAITING_ASYNC_DNS			= LWSIFS_NOT_EST | 32,
-	LRS_WAITING_CONNECT			= LWSIFS_NOT_EST | 1,
+	LRS_WAITING_DNS				= LWSIFS_NOT_EST | 1,
+	LRS_WAITING_CONNECT			= LWSIFS_NOT_EST | 2,
 
 	/* Phase 2: establishing intermediaries on top of transport */
 
-	LRS_WAITING_PROXY_REPLY			= LWSIFS_NOT_EST | 2,
-	LRS_WAITING_SSL				= LWSIFS_NOT_EST | 3,
-	LRS_WAITING_SOCKS_GREETING_REPLY	= LWSIFS_NOT_EST | 4,
-	LRS_WAITING_SOCKS_CONNECT_REPLY		= LWSIFS_NOT_EST | 5,
-	LRS_WAITING_SOCKS_AUTH_REPLY		= LWSIFS_NOT_EST | 6,
+	LRS_WAITING_PROXY_REPLY			= LWSIFS_NOT_EST | 3,
+	LRS_WAITING_SSL				= LWSIFS_NOT_EST | 4,
+	LRS_WAITING_SOCKS_GREETING_REPLY	= LWSIFS_NOT_EST | 5,
+	LRS_WAITING_SOCKS_CONNECT_REPLY		= LWSIFS_NOT_EST | 6,
+	LRS_WAITING_SOCKS_AUTH_REPLY		= LWSIFS_NOT_EST | 7,
 
 	/* Phase 3: establishing tls tunnel */
 
-	LRS_SSL_INIT				= LWSIFS_NOT_EST | 7,
-	LRS_SSL_ACK_PENDING			= LWSIFS_NOT_EST | 8,
-	LRS_PRE_WS_SERVING_ACCEPT		= LWSIFS_NOT_EST | 9,
+	LRS_SSL_INIT				= LWSIFS_NOT_EST | 8,
+	LRS_SSL_ACK_PENDING			= LWSIFS_NOT_EST | 9,
+	LRS_PRE_WS_SERVING_ACCEPT		= LWSIFS_NOT_EST | 10,
 
 	/* Phase 4: connected */
 
-	LRS_WAITING_SERVER_REPLY		= LWSIFS_NOT_EST | 10,
-	LRS_H2_AWAIT_PREFACE			= LWSIFS_NOT_EST | 11,
+	LRS_WAITING_SERVER_REPLY		= LWSIFS_NOT_EST | 11,
+	LRS_H2_AWAIT_PREFACE			= LWSIFS_NOT_EST | 12,
 	LRS_H2_AWAIT_SETTINGS			= LWSIFS_NOT_EST |
-						  LWSIFS_POCB | 12,
+						  LWSIFS_POCB | 13,
 
 	/* Phase 5: protocol logically established */
 
-	LRS_H2_CLIENT_SEND_SETTINGS		= LWSIFS_POCB | 13,
-	LRS_H2_WAITING_TO_SEND_HEADERS		= LWSIFS_POCB | 14,
-	LRS_DEFERRING_ACTION			= LWSIFS_POCB | 15,
-	LRS_IDLING				= 16,
-	LRS_H1C_ISSUE_HANDSHAKE			= 17,
-	LRS_H1C_ISSUE_HANDSHAKE2		= 18,
-	LRS_ISSUE_HTTP_BODY			= 19,
-	LRS_ISSUING_FILE			= 20,
-	LRS_HEADERS				= 21,
-	LRS_BODY				= 22,
-	LRS_DISCARD_BODY			= 31,
-	LRS_ESTABLISHED				= LWSIFS_POCB | 23,
+	LRS_H2_CLIENT_SEND_SETTINGS		= LWSIFS_POCB | 14,
+	LRS_H2_WAITING_TO_SEND_HEADERS		= LWSIFS_POCB | 15,
+	LRS_DEFERRING_ACTION			= LWSIFS_POCB | 16,
+	LRS_IDLING				= 17,
+	LRS_H1C_ISSUE_HANDSHAKE			= 18,
+	LRS_H1C_ISSUE_HANDSHAKE2		= 19,
+	LRS_ISSUE_HTTP_BODY			= 20,
+	LRS_ISSUING_FILE			= 21,
+	LRS_HEADERS				= 22,
+	LRS_BODY				= 23,
+	LRS_DISCARD_BODY			= 24,
+	LRS_ESTABLISHED				= LWSIFS_POCB | 25,
 	/* we are established, but we have embarked on serving a single
 	 * transaction.  Other transaction input may be pending, but we will
 	 * not service it while we are busy dealing with the current
@@ -133,19 +133,19 @@ enum lwsi_state {
 	 * When we complete the current transaction, we would reset our state
 	 * back to ESTABLISHED and start to process the next transaction.
 	 */
-	LRS_DOING_TRANSACTION			= LWSIFS_POCB | 24,
+	LRS_DOING_TRANSACTION			= LWSIFS_POCB | 26,
 
 	/* Phase 6: finishing */
 
-	LRS_WAITING_TO_SEND_CLOSE		= LWSIFS_POCB | 25,
-	LRS_RETURNED_CLOSE			= LWSIFS_POCB | 26,
-	LRS_AWAITING_CLOSE_ACK			= LWSIFS_POCB | 27,
-	LRS_FLUSHING_BEFORE_CLOSE		= LWSIFS_POCB | 28,
-	LRS_SHUTDOWN				= 29,
+	LRS_WAITING_TO_SEND_CLOSE		= LWSIFS_POCB | 27,
+	LRS_RETURNED_CLOSE			= LWSIFS_POCB | 28,
+	LRS_AWAITING_CLOSE_ACK			= LWSIFS_POCB | 29,
+	LRS_FLUSHING_BEFORE_CLOSE		= LWSIFS_POCB | 30,
+	LRS_SHUTDOWN				= 31,
 
 	/* Phase 7: dead */
 
-	LRS_DEAD_SOCKET				= 30,
+	LRS_DEAD_SOCKET				= 32,
 
 	LRS_MASK				= 0xffff
 };
@@ -180,16 +180,14 @@ struct lws_role_ops {
 	 */
 	int (*check_upgrades)(struct lws *wsi);
 	/* role-specific context init during context creation */
-	int (*init_context)(struct lws_context *context,
-			    const struct lws_context_creation_info *info);
+	int (*pt_init_destroy)(struct lws_context *context,
+			    const struct lws_context_creation_info *info,
+			    struct lws_context_per_thread *pt, int destroy);
 	/* role-specific per-vhost init during vhost creation */
 	int (*init_vhost)(struct lws_vhost *vh,
 			  const struct lws_context_creation_info *info);
 	/* role-specific per-vhost destructor during vhost destroy */
 	int (*destroy_vhost)(struct lws_vhost *vh);
-	/* generic 1Hz callback for the role itself */
-	int (*periodic_checks)(struct lws_context *context, int tsi,
-			       time_t now);
 	/* chance for the role to force POLLIN without network activity */
 	int (*service_flag_pending)(struct lws_context *context, int tsi);
 	/* an fd using this role has POLLIN signalled */
@@ -233,6 +231,9 @@ struct lws_role_ops {
 	 * case ret 0 = OK, 1 = fail, wsi needs freeing, -1 = fail, wsi freed */
 	int (*client_bind)(struct lws *wsi,
 			   const struct lws_client_connect_info *i);
+	/* isvalid = 0: request a role-specific keepalive (PING etc)
+	 *         = 1: reset any related validity timer */
+	int (*issue_keepalive)(struct lws *wsi, int isvalid);
 
 	/*
 	 * the callback reasons for adoption for client, server
@@ -334,8 +335,8 @@ int
 lws_role_call_adoption_bind(struct lws *wsi, int type, const char *prot);
 
 struct lws *
-lws_client_connect_4(struct lws *wsi, struct lws *wsi_piggyback, ssize_t plen);
+lws_client_connect_4_established(struct lws *wsi, struct lws *wsi_piggyback, ssize_t plen);
 
 struct lws *
-lws_client_connect_3(struct lws *wsi, const char *ads,
-			struct addrinfo *result, int n, void *opaque);
+lws_client_connect_3_connect(struct lws *wsi, const char *ads,
+			const struct addrinfo *result, int n, void *opaque);

@@ -169,8 +169,11 @@ struct expected expected1[] = {
 		{ LWS_TOKZE_TOKEN_NAME_EQUALS, "a", 1 },
 		{ LWS_TOKZE_TOKEN, "5", 1 },
 		{ LWS_TOKZE_ENDED, "", 0 },
+	},
+	expected17[] = {
+		{ LWS_TOKZE_TOKEN, "hello", 5 },
+		{ LWS_TOKZE_ENDED, "", 0 },
 	}
-
 ;
 
 struct tests tests[] = {
@@ -247,6 +250,10 @@ struct tests tests[] = {
 		"a=5", expected16, LWS_ARRAY_SIZE(expected16),
 		LWS_TOKENIZE_F_NO_INTEGERS
 	},
+	{
+		"# comment1\r\nhello #comment2\r\n#comment3", expected17,
+		LWS_ARRAY_SIZE(expected17), LWS_TOKENIZE_F_HASH_COMMENT
+	}
 };
 
 /*

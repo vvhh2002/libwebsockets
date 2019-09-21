@@ -52,7 +52,8 @@ lws_getaddrinfo46(struct lws *wsi, const char *ads, struct addrinfo **result)
 #endif
 
 struct lws *
-lws_client_connect_4(struct lws *wsi, struct lws *wsi_piggyback, ssize_t plen)
+lws_client_connect_4_established(struct lws *wsi, struct lws *wsi_piggyback,
+				 ssize_t plen)
 {
 #if defined(LWS_CLIENT_HTTP_PROXYING)
 	struct lws_context_per_thread *pt = &wsi->context->pt[(int)wsi->tsi];
@@ -233,8 +234,8 @@ failed:
 }
 
 struct lws *
-lws_client_connect_3(struct lws *wsi, const char *ads,
-		     struct addrinfo *result, int n, void *opaque)
+lws_client_connect_3_connect(struct lws *wsi, const char *ads,
+			     const struct addrinfo *result, int n, void *opaque)
 {
 #if defined(LWS_WITH_UNIX_SOCK)
 	struct sockaddr_un sau;
@@ -247,27 +248,73 @@ lws_client_connect_3(struct lws *wsi, const char *ads,
 #endif
 #ifdef LWS_WITH_IPV6
 	char ipv6only = lws_check_opt(wsi->vhost->options,
-			LWS_SERVER_OPTION_IPV6_V6ONLY_MODIFY |
-			LWS_SERVER_OPTION_IPV6_V6ONLY_VALUE);
+				      LWS_SERVER_OPTION_IPV6_V6ONLY_MODIFY |
+				      LWS_SERVER_OPTION_IPV6_V6ONLY_VALUE);
+#endif
+	const struct sockaddr *psa = NULL;
+	const char *cce = "", *iface;
+	ssize_t plen = 0;
+	lws_sockaddr46 sa46;
+	char ni[48];
+	int m;
+
+#ifdef LWS_WITH_IPV6
 #if defined(__ANDROID__)
 	ipv6only = 0;
 #endif
 #endif
-	const char *cce = "", *iface;
-	const struct sockaddr *psa;
-	ssize_t plen = 0;
-	sockaddr46 sa46;
-	int port = 0;
 
-	if (lwsi_state(wsi) == LRS_WAITING_CONNECT) {
+
+	/*
+	 * async dns calls back here for everybody who cares when it gets a
+	 * result... but if we are piggybacking, we do not want to connect
+	 * ourselves
+	 */
+
+	if (!lws_dll2_is_detached(&wsi->dll2_cli_txn_queue))
+		return wsi;
+#if 0
+	if (!ads && !result) {
+		cce = "dns resolution failed";
+		if (!wsi->oom4)
+			goto oom4;
+		else
+			goto failed;
+	}
+#endif
+
+	if (!wsi->dns_results)
+		wsi->dns_results_next = wsi->dns_results = result;
+
+	/*
+	* We can check using getsockopt if our connect actually completed
+	*/
+
+	if (lwsi_state(wsi) == LRS_WAITING_CONNECT &&
+	    lws_socket_is_valid(wsi->desc.sockfd)) {
 		socklen_t sl = sizeof(int);
 		int e = 0;
 
-		if (!getsockopt(wsi->desc.sockfd, SOL_SOCKET, SO_ERROR, &e, &sl))
-			if (!e)
+		/*
+		* this resets SO_ERROR after reading it.  If there's an error
+		* condition the connect definitively failed.
+		*/
+
+		if (!getsockopt(wsi->desc.sockfd, SOL_SOCKET, SO_ERROR,
+				&e, &sl)) {
+			if (!e) {
+				lwsl_info("%s: getsockopt check: conn OK\n",
+						__func__);
+
 				goto conn_good;
-		cce = "connection failed";
-		goto oom4;
+			}
+
+			lwsl_debug("%s: getsockopt says err %d\n", __func__, e);
+		}
+
+		lwsl_debug("%s: getsockopt check: conn fail: errno %d\n",
+				__func__, LWS_ERRNO);
+		goto try_next_result_fds;
 	}
 
 #if defined(LWS_WITH_UNIX_SOCK)
@@ -287,13 +334,15 @@ lws_client_connect_3(struct lws *wsi, const char *ads,
 	}
 #endif
 
+#if defined(LWS_WITH_ASYNC_DNS)
 	if (n == LADNS_RET_FAILED) {
 		lwsl_notice("%s: adns failed %s\n", __func__, ads);
 		goto oom4;
 	}
+#endif
 
 #if defined(LWS_WITH_DETAILED_LATENCY)
-	if (lwsi_state(wsi) == LRS_WAITING_ASYNC_DNS &&
+	if (lwsi_state(wsi) == LRS_WAITING_DNS &&
 	    wsi->context->detailed_latency_cb) {
 		wsi->detlat.type = LDLT_NAME_RESOLUTION;
 		wsi->detlat.latencies[LAT_DUR_PROXY_CLIENT_REQ_TO_WRITE] =
@@ -325,7 +374,7 @@ lws_client_connect_3(struct lws *wsi, const char *ads,
 
 		plen += lws_snprintf((char *)pt->serv_buf + plen, 5, "\x0d\x0a");
 		ads = wsi->vhost->http.http_proxy_address;
-		port = wsi->vhost->http.http_proxy_port;
+		wsi->c_port = wsi->vhost->http.http_proxy_port;
 #else
 		if (0) {
 #endif
@@ -342,131 +391,92 @@ lws_client_connect_3(struct lws *wsi, const char *ads,
 
 		lwsl_client("Sending SOCKS Greeting\n");
 		ads = wsi->vhost->socks_proxy_address;
-		port = wsi->vhost->socks_proxy_port;
+		wsi->c_port = wsi->vhost->socks_proxy_port;
 #endif
-	} else {
-
-		/* Priority 3: Connect directly */
-
-		/* ads already set */
-		port = wsi->c_port;
 	}
 
 	memset(&sa46, 0, sizeof(sa46));
-#ifdef LWS_WITH_IPV6
-	if (wsi->ipv6) {
-		struct sockaddr_in6 *sa6;
 
-		if (n || !result) {
-			/* lws_getaddrinfo46 failed, there is no usable result */
-			lwsl_notice("%s: lws_getaddrinfo46 failed %d\n",
-					__func__, n);
-			cce = "ipv6 lws_getaddrinfo46 failed";
-			goto oom4;
-		}
+	if (n || !wsi->dns_results) {
+		/* lws_getaddrinfo46 failed, there is no usable result */
+		lwsl_notice("%s: lws_getaddrinfo46 failed %d\n",
+				__func__, n);
+		cce = "ipv6 lws_getaddrinfo46 failed";
+		goto oom4;
+	}
 
-		sa6 = ((struct sockaddr_in6 *)result->ai_addr);
-		sa46.sa6.sin6_family = AF_INET6;
-		switch (result->ai_family) {
-		case AF_INET:
-			if (ipv6only)
-				break;
+	/*
+	 * Let's try connecting to each of the results in turn until one works
+	 * or we run out of results
+	 */
+
+next_result:
+
+	psa = (const struct sockaddr *)&sa46;
+	n = sizeof(sa46);
+	memset(&sa46, 0, sizeof(sa46));
+
+	switch (wsi->dns_results_next->ai_family) {
+	case AF_INET:
+#if defined(LWS_WITH_IPV6)
+		if (ipv6only) {
+			sa46.sa4.sin_family = AF_INET6;
+
 			/* map IPv4 to IPv6 */
 			memset((char *)&sa46.sa6.sin6_addr, 0,
 						sizeof(sa46.sa6.sin6_addr));
 			sa46.sa6.sin6_addr.s6_addr[10] = 0xff;
 			sa46.sa6.sin6_addr.s6_addr[11] = 0xff;
 			memcpy(&sa46.sa6.sin6_addr.s6_addr[12],
-				&((struct sockaddr_in *)result->ai_addr)->sin_addr,
+				&((struct sockaddr_in *)
+				    wsi->dns_results_next->ai_addr)->sin_addr,
 							sizeof(struct in_addr));
-			lwsl_notice("uplevelling AF_INET to AF_INET6\n");
+			sa46.sa6.sin6_port = htons(wsi->c_port);
+			ni[0] = '\0';
+			lws_write_numeric_address(sa46.sa6.sin6_addr.s6_addr,
+						  16, ni, sizeof(ni));
+			lwsl_info("%s: %s ipv4->ipv6 %s\n", __func__, ads, ni);
 			break;
-
-		case AF_INET6:
-			memcpy(&sa46.sa6.sin6_addr, &sa6->sin6_addr,
-						sizeof(struct in6_addr));
-			sa46.sa6.sin6_scope_id = sa6->sin6_scope_id;
-			sa46.sa6.sin6_flowinfo = sa6->sin6_flowinfo;
-			break;
-		default:
-			lwsl_err("Unknown address family\n");
-#if !defined(LWS_WITH_ASYNC_DNS)
-			freeaddrinfo(result);
-#endif
-			cce = "unknown address family";
-			goto oom4;
 		}
-	} else
-#endif /* use ipv6 */
-
-	/* use ipv4 */
-	{
-		void *p = NULL;
-
-		if (!n) {
-			struct addrinfo *res = result;
-
-			/* pick the first AF_INET (IPv4) result */
-
-			while (!p && res) {
-				switch (res->ai_family) {
-				case AF_INET:
-					p = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
-					break;
-				}
-
-				res = res->ai_next;
-			}
-#if defined(LWS_FALLBACK_GETHOSTBYNAME) && !defined(LWS_WITH_ASYNC_DNS)
-		} else if (n == EAI_SYSTEM) {
-			struct hostent *host;
-
-			lwsl_info("ipv4 getaddrinfo err, try gethostbyname\n");
-			host = gethostbyname(ads);
-			if (host) {
-				p = host->h_addr;
-			} else {
-				lwsl_err("gethostbyname failed\n");
-				cce = "gethostbyname (ipv4) failed";
-				goto oom4;
-			}
 #endif
-		} else {
-			lwsl_err("getaddrinfo failed: %s: %d\n", ads, n);
-			cce = "getaddrinfo failed";
-			goto oom4;
-		}
-
-		if (!p) {
-#if !defined(LWS_WITH_ASYNC_DNS)
-			if (result)
-				freeaddrinfo(result);
-#endif
-			lwsl_err("Couldn't identify address\n");
-			cce = "unable to lookup address";
-			goto oom4;
-		}
-
 		sa46.sa4.sin_family = AF_INET;
-		sa46.sa4.sin_addr = *((struct in_addr *)p);
+		sa46.sa4.sin_addr.s_addr =
+			((struct sockaddr_in *)wsi->dns_results_next->ai_addr)->
+								sin_addr.s_addr;
 		memset(&sa46.sa4.sin_zero, 0, sizeof(sa46.sa4.sin_zero));
-	}
-
-#if !defined(LWS_WITH_ASYNC_DNS)
-	if (result)
-		freeaddrinfo(result);
+		sa46.sa4.sin_port = htons(wsi->c_port);
+		n = sizeof(struct sockaddr_in);
+		lws_write_numeric_address((uint8_t *)&sa46.sa4.sin_addr.s_addr,
+					  4, ni, sizeof(ni));
+		lwsl_info("%s: %s ipv4 %s\n", __func__, ads, ni);
+		break;
+	case AF_INET6:
+#if defined(LWS_WITH_IPV6)
+		if (!wsi->ipv6)
+			goto try_next_result;
+		sa46.sa4.sin_family = AF_INET6;
+		memcpy(&sa46.sa6.sin6_addr,
+		       &((struct sockaddr_in6 *)wsi->dns_results_next->ai_addr)->
+				       sin6_addr, sizeof(struct in6_addr));
+		sa46.sa6.sin6_scope_id = ((struct sockaddr_in6 *)
+				wsi->dns_results_next->ai_addr)->sin6_scope_id;
+		sa46.sa6.sin6_flowinfo = ((struct sockaddr_in6 *)
+				wsi->dns_results_next->ai_addr)->sin6_flowinfo;
+		sa46.sa6.sin6_port = htons(wsi->c_port);
+		lws_write_numeric_address((uint8_t *)&sa46.sa6.sin6_addr,
+				16, ni, sizeof(ni));
+		lwsl_info("%s: %s ipv6 %s\n", __func__, ads, ni);
+#else
+		goto try_next_result;	/* ipv4 only can't use this */
 #endif
+		break;
+	}
 
 #if defined(LWS_WITH_UNIX_SOCK)
 ads_known:
 #endif
 
-	/*
-	 * We have a name resolution to try... we might have to try more than
-	 * one, so accumulate any duration
-	 */
-
-	/* now we decided on ipv4 or ipv6, set the port */
+	/* now we decided on ipv4 or ipv6, set the port and create socket*/
 
 	if (!lws_socket_is_valid(wsi->desc.sockfd)) {
 
@@ -481,20 +491,12 @@ ads_known:
 			wsi->desc.sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
 		else
 #endif
-		{
-
-#ifdef LWS_WITH_IPV6
-		if (wsi->ipv6)
-			wsi->desc.sockfd = socket(AF_INET6, SOCK_STREAM, 0);
-		else
-#endif
-			wsi->desc.sockfd = socket(AF_INET, SOCK_STREAM, 0);
-		}
+			wsi->desc.sockfd = socket(sa46.sa4.sin_family,
+						  SOCK_STREAM, 0);
 
 		if (!lws_socket_is_valid(wsi->desc.sockfd)) {
 			lwsl_warn("Unable to open socket\n");
-			cce = "unable to open socket";
-			goto oom4;
+			goto try_next_result;
 		}
 
 		if (lws_plat_set_socket_options(wsi->vhost, wsi->desc.sockfd,
@@ -504,44 +506,34 @@ ads_known:
 						0)) {
 #endif
 			lwsl_err("Failed to set wsi socket options\n");
-			compatible_close(wsi->desc.sockfd);
-			cce = "set socket opts failed";
-			goto oom4;
+			goto try_next_result_closesock;
 		}
 
+		lwsl_debug("%s: %p: WAITING_CONNECT\n", __func__, wsi);
 		lwsi_set_state(wsi, LRS_WAITING_CONNECT);
 
 #if !defined(LWS_AMAZON_RTOS)
 		if (wsi->context->event_loop_ops->accept)
-			if (wsi->context->event_loop_ops->accept(wsi)) {
-				compatible_close(wsi->desc.sockfd);
-				cce = "event loop accept failed";
-				goto oom4;
-			}
+			if (wsi->context->event_loop_ops->accept(wsi))
+				goto try_next_result_closesock;
 #endif
 
-		if (__insert_wsi_socket_into_fds(wsi->context, wsi)) {
-			compatible_close(wsi->desc.sockfd);
-			cce = "insert wsi failed";
-			goto oom4;
-		}
+		if (__insert_wsi_socket_into_fds(wsi->context, wsi))
+			goto try_next_result_closesock;
 
-		if (lws_change_pollfd(wsi, 0, LWS_POLLIN)) {
-			compatible_close(wsi->desc.sockfd);
-			cce = "change_pollfd failed";
-			goto oom4;
-		}
+		if (lws_change_pollfd(wsi, 0, LWS_POLLIN))
+			goto try_next_result_fds;
 
 		/*
-		 * past here, we can't simply free the structs as error
-		 * handling as oom4 does.  We have to run the whole close flow.
+		 * Past here, we can't simply free the structs as error
+		 * handling as oom4 does.
+		 *
+		 * We can run the whole close flow, or unpick the fds inclusion
+		 * and anything else we have done.
 		 */
-
+		wsi->oom4 = 1;
 		if (!wsi->protocol)
 			wsi->protocol = &wsi->vhost->protocols[0];
-
-		wsi->protocol->callback(wsi, LWS_CALLBACK_WSI_CREATE,
-					wsi->user_space, NULL, 0);
 
 		lws_set_timeout(wsi, PENDING_TIMEOUT_AWAITING_CONNECT_RESPONSE,
 				AWAITING_TIMEOUT);
@@ -554,11 +546,8 @@ ads_known:
 		if (iface && *iface) {
 			n = lws_socket_bind(wsi->vhost, wsi->desc.sockfd, 0,
 					    iface, wsi->ipv6);
-			if (n < 0) {
-				lwsl_err("%s: unable to bind to %s\n", __func__, iface);
-				cce = "unable to bind socket";
-				goto failed;
-			}
+			if (n < 0)
+				goto try_next_result_fds;
 		}
 	}
 
@@ -569,65 +558,55 @@ ads_known:
 	} else
 #endif
 
-	{
-#ifdef LWS_WITH_IPV6
-		if (wsi->ipv6) {
-			sa46.sa6.sin6_port = htons(port);
-			n = sizeof(struct sockaddr_in6);
-			psa = (const struct sockaddr *)&sa46;
-		} else
-#endif
-		{
-			sa46.sa4.sin_port = htons(port);
-			n = sizeof(struct sockaddr);
-			psa = (const struct sockaddr *)&sa46;
-		}
-	}
+	if (!psa) /* coverity */
+		goto try_next_result_fds;
+
+	/*
+	 * The actual connection attempt
+	 */
 
 #if defined(LWS_WITH_DETAILED_LATENCY)
 	wsi->detlat.earliest_write_req =
-		wsi->detlat.earliest_write_req_pre_write =
-						lws_now_usecs();
+		wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
 #endif
 
-	if (connect(wsi->desc.sockfd, (const struct sockaddr *)psa, n) == -1 ||
-	    LWS_ERRNO == LWS_EISCONN) {
-		if (LWS_ERRNO == LWS_EALREADY ||
-		    LWS_ERRNO == LWS_EINPROGRESS ||
-		    LWS_ERRNO == LWS_EWOULDBLOCK
+	m = connect(wsi->desc.sockfd, (const struct sockaddr *)psa, n);
+	if (m == -1) {
+		lwsl_debug("%s: connect says errno: %d\n", __func__, LWS_ERRNO);
+
+		if (LWS_ERRNO != LWS_EALREADY &&
+		    LWS_ERRNO != LWS_EINPROGRESS &&
+		    LWS_ERRNO != LWS_EWOULDBLOCK
 #ifdef _WIN32
-			|| LWS_ERRNO == WSAEINVAL
+			&& LWS_ERRNO != WSAEINVAL
 #endif
 		) {
-			lwsl_client("nonblocking connect retry (errno = %d)\n",
-				    LWS_ERRNO);
-
-			if (lws_plat_check_connection_error(wsi)) {
-				cce = "socket connect failed";
-				goto failed;
-			}
-
-			/*
-			 * must do specifically a POLLOUT poll to hear
-			 * about the connect completion
-			 */
-			if (lws_change_pollfd(wsi, 0, LWS_POLLOUT)) {
-				cce = "POLLOUT set failed";
-				goto failed;
-			}
-
-			return wsi;
+#if defined(_DEBUG)
+			char nads[48];
+			lws_sa46_write_numeric_address(&sa46, nads, sizeof(nads));
+			lwsl_info("%s: Connect failed: %s port %d\n",
+				    __func__, nads, wsi->c_port);
+#endif
+			goto try_next_result_fds;
 		}
 
-		if (LWS_ERRNO != LWS_EISCONN) {
-			lwsl_notice("Connect failed: port %d errno=%d\n",
-					port, LWS_ERRNO);
-			cce = "connect failed";
-			goto failed;
-		}
+		if (lws_plat_check_connection_error(wsi))
+			goto try_next_result_fds;
+
+		/*
+		 * must do specifically a POLLOUT poll to hear
+		 * about the connect completion
+		 */
+		if (lws_change_pollfd(wsi, 0, LWS_POLLOUT))
+			goto try_next_result_fds;
+
+		return wsi;
 	}
 
 conn_good:
+
+	lwsl_debug("%s: Connection started\n", __func__);
+
 	/* the tcp connection has happend */
 
 #if defined(LWS_WITH_DETAILED_LATENCY)
@@ -644,8 +623,13 @@ conn_good:
 	}
 #endif
 
-	return lws_client_connect_4(wsi, NULL, plen);
+	lws_addrinfo_clean(wsi);
 
+	if (wsi->protocol)
+		wsi->protocol->callback(wsi, LWS_CALLBACK_WSI_CREATE,
+					wsi->user_space, NULL, 0);
+
+	return lws_client_connect_4_established(wsi, NULL, plen);
 
 oom4:
 	if (lwsi_role_client(wsi) && wsi->protocol /* && lwsi_state_est(wsi) */)
@@ -672,7 +656,24 @@ oom4:
 
 	return NULL;
 
-failed:
+
+try_next_result_fds:
+	wsi->oom4 = 0;
+	__remove_wsi_socket_from_fds(wsi);
+
+try_next_result_closesock:
+	compatible_close(wsi->desc.sockfd);
+	wsi->desc.sockfd = LWS_SOCK_INVALID;
+
+try_next_result:
+	if (wsi->dns_results_next) {
+		wsi->dns_results_next = wsi->dns_results_next->ai_next;
+		if (wsi->dns_results_next)
+			goto next_result;
+	}
+	cce = "Unable to connect";
+
+//failed:
 	lws_inform_client_conn_fail(wsi, (void *)cce, strlen(cce));
 
 failed1:
@@ -682,7 +683,7 @@ failed1:
 }
 
 struct lws *
-lws_client_connect_2(struct lws *wsi)
+lws_client_connect_2_dnsreq(struct lws *wsi)
 {
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
 	const char *adsin;
@@ -695,8 +696,8 @@ lws_client_connect_2(struct lws *wsi)
 #endif
 	int n, port = 0;
 
-	if (lwsi_state(wsi) == LRS_WAITING_ASYNC_DNS) {
-		lwsl_notice("%s: LRS_WAITING_ASYNC_DNS\n", __func__);
+	if (lwsi_state(wsi) == LRS_WAITING_DNS) {
+		lwsl_notice("%s: LRS_WAITING_DNS\n", __func__);
 
 		return wsi;
 	}
@@ -738,8 +739,8 @@ lws_client_connect_2(struct lws *wsi)
 
 	lws_vhost_lock(wsi->vhost); /* ----------------------------------- { */
 
-	lws_start_foreach_dll_safe(struct lws_dll2 *, d, d1,
-			lws_dll2_get_head(&wsi->vhost->dll_cli_active_conns_owner)) {
+	lws_start_foreach_dll_safe(struct lws_dll2 *, d, d1, lws_dll2_get_head(
+				&wsi->vhost->dll_cli_active_conns_owner)) {
 		struct lws *w = lws_container_of(d, struct lws,
 						 dll_cli_active_conns);
 
@@ -798,7 +799,7 @@ lws_client_connect_2(struct lws *wsi)
 			 * to take over parsing the rx.
 			 */
 			lws_vhost_unlock(wsi->vhost); /* } ---------- */
-			return lws_client_connect_4(wsi, w, 0);
+			return lws_client_connect_4_established(wsi, w, 0);
 		}
 
 	} lws_end_foreach_dll_safe(d, d1);
@@ -807,6 +808,8 @@ lws_client_connect_2(struct lws *wsi)
 
 create_new_conn:
 #endif
+
+	wsi->addrinfo_idx = 0;
 
 	/*
 	 * clients who will create their own fresh connection keep a copy of
@@ -912,8 +915,9 @@ create_new_conn:
 	 * prepare the actual connection
 	 * to whatever we decided to connect to
 	 */
+	lwsi_set_state(wsi, LRS_WAITING_DNS);
 
-	lwsl_info("%s: %p: address %s:%u\n", __func__, wsi, ads, port);
+	lwsl_warn("%s: %p: lookup %s:%u\n", __func__, wsi, ads, port);
 	(void)port;
 
 #if defined(LWS_WITH_DETAILED_LATENCY)
@@ -923,17 +927,11 @@ create_new_conn:
 #if !defined(LWS_WITH_ASYNC_DNS)
 	n = lws_getaddrinfo46(wsi, ads, &result);
 #else
-	lwsi_set_state(wsi, LRS_WAITING_ASYNC_DNS);
+	lwsi_set_state(wsi, LRS_WAITING_DNS);
 	/* this is either FAILED, CONTINUING, or already called connect_4 */
-#ifdef LWS_WITH_IPV6
-	n = lws_async_dns_query(wsi->context, wsi->tsi, ads,
-				LWS_IPV6_ENABLED(wsi->vhost) ?
-					LWS_ADNS_RECORD_AAAA :
-					LWS_ADNS_RECORD_A,
-#else
+
 	n = lws_async_dns_query(wsi->context, wsi->tsi, ads, LWS_ADNS_RECORD_A,
-#endif
-				lws_client_connect_3, wsi, NULL);
+				lws_client_connect_3_connect, wsi, NULL);
 	if (n == LADNS_RET_FAILED_WSI_CLOSED)
 		return NULL;
 
@@ -946,7 +944,7 @@ create_new_conn:
 #if defined(LWS_WITH_UNIX_SOCK)
 next_step:
 #endif
-	return lws_client_connect_3(wsi, ads, result, n, NULL);
+	return lws_client_connect_3_connect(wsi, ads, result, n, NULL);
 
 oom4:
 	if (lwsi_role_client(wsi) && wsi->protocol /* && lwsi_state_est(wsi) */)
@@ -1135,7 +1133,7 @@ lws_client_reset(struct lws **pwsi, int ssl, const char *address, int port,
 
 	lws_free_set_NULL(stash);
 
-	*pwsi = lws_client_connect_2(wsi);
+	*pwsi = lws_client_connect_2_dnsreq(wsi);
 
 	return *pwsi;
 
@@ -1321,7 +1319,7 @@ lws_http_client_connect_via_info2(struct lws *wsi)
 no_ah:
 	wsi->context->count_wsi_allocated++;
 
-	return lws_client_connect_2(wsi);
+	return lws_client_connect_2_dnsreq(wsi);
 
 bail1:
 #if defined(LWS_WITH_SOCKS5)

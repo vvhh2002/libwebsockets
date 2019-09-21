@@ -165,14 +165,6 @@ enum pmd_return {
 	PMDR_FAILED = -1
 };
 
-typedef union {
-#ifdef LWS_WITH_IPV6
-	struct sockaddr_in6 sa6;
-#endif
-	struct sockaddr_in sa4;
-} sockaddr46;
-
-
 #if defined(LWS_WITH_PEER_LIMITS)
 struct lws_peer {
 	struct lws_peer *next;
@@ -284,7 +276,7 @@ typedef struct lws_dsh_obj_head {
 
 typedef struct lws_dsh_obj {
 	lws_dll2_t			list;	/* must be first */
-	struct lws_dsh			*dsh;	/* invalid when on free list */
+	struct lws_dsh	  		*dsh;	/* invalid when on free list */
 	size_t				size;	/* invalid when on free list */
 	size_t				asize;
 } lws_dsh_obj_t;
@@ -311,12 +303,12 @@ typedef struct lws_dsh {
  */
 
 typedef struct lws_async_dns {
-	struct sockaddr_in 	sa;
-	lws_dll2_owner_t	active;
+	lws_sockaddr46 		sa46; /* nameserver */
+	lws_dll2_owner_t	waiting_send;
+	lws_dll2_owner_t	waiting_resp;
 	lws_dll2_owner_t	cached;
 	struct lws		*wsi;
 	time_t			time_set_server;
-	uint16_t		tid;
 	char			dns_server_set;
 } lws_async_dns_t;
 
@@ -326,9 +318,11 @@ typedef enum {
 	LADNS_CONF_SERVER_CHANGED
 } lws_async_dns_server_check_t;
 
+#if defined(LWS_WITH_ASYNC_DNS)
 void
 lws_aysnc_dns_completed(struct lws *wsi, void *sa, size_t salen,
 			lws_async_dns_retcode_t ret);
+#endif
 void
 lws_async_dns_cancel(struct lws *wsi);
 
@@ -359,6 +353,9 @@ struct lws_context_per_thread {
 #endif
 #if defined(LWS_PLAT_UNIX)
 	lws_sorted_usec_list_t sul_plat;
+#endif
+#if defined(LWS_ROLE_CGI)
+	lws_sorted_usec_list_t sul_cgi;
 #endif
 #if defined(LWS_WITH_STATS)
 	uint64_t lws_stats[LWSSTATS_SIZE];
@@ -514,6 +511,8 @@ struct lws_vhost {
 	struct lws_context *context;
 	struct lws_vhost *vhost_next;
 
+	const lws_retry_bo_t *retry_policy;
+
 	struct lws *lserv_wsi;
 	const char *name;
 	const char *iface;
@@ -590,7 +589,6 @@ struct lws {
 #endif
 #if defined(LWS_ROLE_WS)
 	struct _lws_websocket_related *ws; /* allocated if we upgrade to ws */
-	lws_sorted_usec_list_t sul_ping;
 #endif
 #if defined(LWS_ROLE_DBUS)
 	struct _lws_dbus_mode_related dbus;
@@ -612,6 +610,8 @@ struct lws {
 
 	lws_sorted_usec_list_t sul_timeout;
 	lws_sorted_usec_list_t sul_hrtimer;
+	lws_sorted_usec_list_t sul_validity;
+
 	struct lws_dll2 dll_buflist; /* guys with pending rxflow */
 	struct lws_dll2 same_vh_protocol;
 #if defined(LWS_WITH_ASYNC_DNS)
@@ -633,6 +633,7 @@ struct lws {
 	const struct lws_role_ops *role_ops;
 	const struct lws_protocols *protocol;
 	struct lws_sequencer *seq;	/* associated sequencer if any */
+	const lws_retry_bo_t *retry_policy;
 
 #if defined(LWS_WITH_THREADPOOL)
 	struct lws_threadpool_task *tp_task;
@@ -646,6 +647,8 @@ struct lws {
 #if defined(LWS_WITH_CLIENT)
 	struct client_info_stash *stash;
 	char *cli_hostname_copy;
+	const struct addrinfo *dns_results;
+	const struct addrinfo *dns_results_next;
 #endif
 	void *user_space;
 	void *opaque_parent_data;
@@ -713,6 +716,8 @@ struct lws {
 	unsigned int h1_ws_proxied:1;
 	unsigned int proxied_ws_parent:1;
 	unsigned int do_bind:1;
+	unsigned int oom4:1;
+	unsigned int validity_hup:1;
 
 	unsigned int could_have_pending:1; /* detect back-to-back writes */
 	unsigned int outer_will_close:1;
@@ -756,6 +761,7 @@ struct lws {
 #endif
 #if defined(LWS_WITH_CLIENT)
 	char chunk_parser; /* enum lws_chunk_parser */
+	uint8_t addrinfo_idx;
 #endif
 #if defined(LWS_WITH_CGI) || defined(LWS_WITH_CLIENT)
 	char reason_bf; /* internal writeable callback reason bitfield */
@@ -963,9 +969,6 @@ lws_plat_plugins_init(struct lws_context * context, const char * const *d);
 LWS_VISIBLE LWS_EXTERN int
 lws_plat_plugins_destroy(struct lws_context * context);
 
-LWS_EXTERN void
-lws_restart_ws_ping_pong_timer(struct lws *wsi);
-
 struct lws *
 lws_adopt_socket_vhost(struct lws_vhost *vh, lws_sockfd_type accept_fd);
 
@@ -1030,7 +1033,7 @@ LWS_EXTERN lws_usec_t
 __lws_seq_timeout_check(struct lws_context_per_thread *pt, lws_usec_t usnow);
 
 LWS_EXTERN struct lws * LWS_WARN_UNUSED_RESULT
-lws_client_connect_2(struct lws *wsi);
+lws_client_connect_2_dnsreq(struct lws *wsi);
 
 LWS_VISIBLE struct lws * LWS_WARN_UNUSED_RESULT
 lws_client_reset(struct lws **wsi, int ssl, const char *address, int port,
@@ -1119,6 +1122,9 @@ lws_plat_pipe_signal(struct lws *wsi);
 void
 lws_plat_pipe_close(struct lws *wsi);
 
+void
+lws_addrinfo_clean(struct lws *wsi);
+
 LWS_EXTERN void
 lws_add_wsi_to_draining_ext_list(struct lws *wsi);
 LWS_EXTERN void
@@ -1196,6 +1202,11 @@ lws_threadpool_tsi_context(struct lws_context *context, int tsi);
 void
 __lws_wsi_remove_from_sul(struct lws *wsi);
 
+void
+lws_validity_confirmed(struct lws *wsi);
+void
+_lws_validity_confirmed_role(struct lws *wsi);
+
 int
 lws_seq_pt_init(struct lws_context_per_thread *pt);
 
@@ -1217,7 +1228,7 @@ lws_inform_client_conn_fail(struct lws *wsi, void *arg, size_t len);
 
 #if defined(LWS_WITH_ASYNC_DNS)
 lws_async_dns_server_check_t
-lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa);
+lws_plat_asyncdns_init(struct lws_context *context, lws_sockaddr46 *sa);
 int
 lws_async_dns_init(struct lws_context *context);
 void

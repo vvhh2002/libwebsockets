@@ -353,7 +353,7 @@ if (LWS_WITH_MBEDTLS)
 	include_directories(lib/tls/mbedtls/wrapper/include)
 endif()
 
-include_directories(include plugins lib/core lib/core-net lib/event-libs include/abstract lib/tls lib/roles lib/event-libs/libuv lib/event-libs/poll lib/event-libs/libevent lib/event-libs/libev lib/jose/jwe lib/jose/jws lib/jose lib/misc lib/roles/http lib/roles/http/compression lib/roles/h1 lib/roles/h2 lib/roles/ws lib/roles/cgi lib/roles/dbus lib/roles/raw-proxy lib/abstract lib/async-dns)
+include_directories(include plugins lib/core lib/core-net lib/event-libs include/abstract lib/tls lib/roles lib/event-libs/libuv lib/event-libs/poll lib/event-libs/libevent lib/event-libs/libev lib/jose/jwe lib/jose/jws lib/jose lib/misc lib/roles/http lib/roles/http/compression lib/roles/h1 lib/roles/h2 lib/roles/ws lib/roles/cgi lib/roles/dbus lib/roles/raw-proxy lib/abstract lib/system/async-dns)
 
 if (LWS_PLAT_FREERTOS)
 	include_directories(lib/plat/freertos lib/plat/freertos/esp32)
@@ -1022,8 +1022,8 @@ if (LWS_WITH_NETWORK)
 
 	if (LWS_WITH_ASYNC_DNS)
 		list(APPEND SOURCES
-			lib/async-dns/async-dns.c
-			lib/async-dns/async-dns-parse.c)
+			lib/system/async-dns/async-dns.c
+			lib/system/async-dns/async-dns-parse.c)
 	endif()
 
 	if (LWS_WITH_DETAILED_LATENCY)

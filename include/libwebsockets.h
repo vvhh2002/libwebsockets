@@ -314,6 +314,7 @@ lws_pthread_mutex_unlock(pthread_mutex_t *lock)
 #ifndef lws_container_of
 #define lws_container_of(P,T,M)	((T *)((char *)(P) - offsetof(T, M)))
 #endif
+#define LWS_ALIGN_TO(x, bou) x += ((bou) - ((x) % (bou))) % (bou)
 
 struct lws;
 
@@ -528,6 +529,8 @@ struct lws_tokens;
 struct lws_vhost;
 struct lws;
 
+#include <libwebsockets/lws-dll2.h>
+#include <libwebsockets/lws-retry.h>
 #include <libwebsockets/lws-system.h>
 #include <libwebsockets/lws-detailed-latency.h>
 #include <libwebsockets/lws-ws-close.h>
@@ -564,7 +567,6 @@ struct lws;
 #include <libwebsockets/lws-lwsac.h>
 #include <libwebsockets/lws-fts.h>
 #include <libwebsockets/lws-diskcache.h>
-#include <libwebsockets/lws-retry.h>
 #include <libwebsockets/lws-sequencer.h>
 
 #include <libwebsockets/abstract/abstract.h>

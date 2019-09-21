@@ -74,7 +74,7 @@
 	}
 
 	function clear_errors() {
-		var t = document.getElementById("ongoing");
+		var n, t = document.getElementById("ongoing");
 
 		for (n = 0; n < t.rows.length; n++)
 			if (t.rows[n].cells[0].classList.contains("err"))
@@ -155,7 +155,6 @@
 
 	function upl_button(e) {
 		var fi = document.getElementById("file"),
-		da = document.getElementById("da");
 
 		clear_errors();
 		e.preventDefault();

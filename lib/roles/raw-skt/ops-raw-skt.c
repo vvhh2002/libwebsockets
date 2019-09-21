@@ -117,7 +117,7 @@ try_pollout:
 
 #if defined(LWS_WITH_CLIENT)
 	if (lwsi_state(wsi) == LRS_WAITING_CONNECT)
-		lws_client_connect_4(wsi, NULL, 0);
+		lws_client_connect_4_established(wsi, NULL, 0);
 #endif
 
 	/* one shot */
@@ -219,10 +219,9 @@ struct lws_role_ops role_ops_raw_skt = {
 	/* role name */			"raw-skt",
 	/* alpn id */			NULL,
 	/* check_upgrades */		NULL,
-	/* init_context */		NULL,
+	/* pt_init_destroy */		NULL,
 	/* init_vhost */		NULL,
 	/* destroy_vhost */		NULL,
-	/* periodic_checks */		NULL,
 	/* service_flag_pending */	NULL,
 	/* handle_POLLIN */		rops_handle_POLLIN_raw_skt,
 	/* handle_POLLOUT */		NULL,
@@ -246,6 +245,7 @@ struct lws_role_ops role_ops_raw_skt = {
 #else
 					NULL,
 #endif
+	/* issue_keepalive */		NULL,
 	/* adoption_cb clnt, srv */	{ LWS_CALLBACK_RAW_CONNECTED,
 					  LWS_CALLBACK_RAW_ADOPT },
 	/* rx_cb clnt, srv */		{ LWS_CALLBACK_RAW_RX,

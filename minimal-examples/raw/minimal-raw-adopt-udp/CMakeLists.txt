@@ -63,6 +63,8 @@ ENDMACRO()
 
 set(requirements 1)
 require_lws_config(LWS_WITH_SERVER 1 requirements)
+require_lws_config(LWS_WITH_CLIENT 1 requirements)
+
 
 if (requirements)
 	add_executable(${SAMP} ${SRCS})

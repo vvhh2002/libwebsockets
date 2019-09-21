@@ -71,6 +71,7 @@ lws_create_new_server_wsi(struct lws_vhost *vhost, int fixed_tsi)
 	new_wsi->context = vhost->context;
 	new_wsi->pending_timeout = NO_PENDING_TIMEOUT;
 	new_wsi->rxflow_change_to = LWS_RXFLOW_ALLOW;
+	new_wsi->retry_policy = vhost->retry_policy;
 
 #if defined(LWS_WITH_DETAILED_LATENCY)
 	if (vhost->context->detailed_latency_cb)
@@ -409,65 +410,86 @@ bail:
 	return NULL;
 }
 
+#if defined(LWS_WITH_CLIENT)
 static struct lws *
-lws_create_adopt_udp2(struct lws *wsi, const char *ads, struct addrinfo *r,
-			int n, void *opaque)
+lws_create_adopt_udp2(struct lws *wsi, const char *ads,
+		      const struct addrinfo *r, int n, void *opaque)
 {
 	lws_sock_file_fd_type sock;
-	struct addrinfo *rp;
 
-	lwsl_info("%s: %s dns result %d\n", __func__, ads ? ads : "null", n);
-	if (n < 0)
+	assert(wsi);
+
+	if (!wsi->dns_results)
+		wsi->dns_results_next = wsi->dns_results = r;
+
+	if (n < 0 || !r)
 		goto bail;
 
-	/*
-	 * we have done the dns lookup, identify the result we want
-	 * if any, and then complete the adoption by binding wsi to
-	 * socket opened on it.
-	 *
-	 * Ignore the weak assumptions about protocol driven by port number
-	 * and force to DGRAM / UDP since that's what this function is for
-	 */
-	for (rp = r; rp; rp = rp->ai_next) {
-		sock.sockfd = socket(rp->ai_family, SOCK_DGRAM, IPPROTO_UDP);
-		if (sock.sockfd != LWS_SOCK_INVALID)
-			break;
-	}
-	if (!rp) {
-		lwsl_err("%s: unable to create INET socket\n", __func__);
-		assert(0);
-		goto bail;
-	}
+	while (wsi->dns_results_next) {
 
-	if (wsi->do_bind && bind(sock.sockfd, rp->ai_addr,
+		/*
+		 * We have done the dns lookup, identify the result we want
+		 * if any, and then complete the adoption by binding wsi to
+		 * socket opened on it.
+		 *
+		 * Ignore the weak assumptions about protocol driven by port
+		 * number and force to DGRAM / UDP since that's what this
+		 * function is for.
+		 */
+
+		sock.sockfd = socket(wsi->dns_results_next->ai_family,
+				     SOCK_DGRAM, IPPROTO_UDP);
+
+		if (sock.sockfd == LWS_SOCK_INVALID)
+			goto resume;
+
+		if (wsi->do_bind &&
+		    bind(sock.sockfd, wsi->dns_results_next->ai_addr,
 #if defined(_WIN32)
-			    (int)rp->ai_addrlen
+			 (int)wsi->dns_results_next->ai_addrlen
 #else
-			    rp->ai_addrlen
+			 wsi->dns_results_next->ai_addrlen
 #endif
-	   ) == -1) {
-		lwsl_err("%s: bind failed\n", __func__);
-		goto bail;
-	}
-
-	if (!wsi->do_bind) {
-		((struct sockaddr_in *)rp->ai_addr)->sin_port = htons(wsi->c_port);
-		if (connect(sock.sockfd, rp->ai_addr, rp->ai_addrlen) == -1) {
-			lwsl_err("%s: connect fd %d fam %d %s:%u failed "
-				 "(salen %d) errno %d\n", __func__,
-				 sock.sockfd, rp->ai_addr->sa_family,
-				 ads ? ads : "null", wsi->c_port,
-				 (int)rp->ai_addrlen, LWS_ERRNO);
-			goto bail;
+								    ) == -1) {
+			lwsl_notice("%s: bind failed\n", __func__);
+			goto resume;
 		}
 
-		memcpy(&wsi->udp->sa, rp->ai_addr, rp->ai_addrlen);
-		wsi->udp->salen = rp->ai_addrlen;
+		if (!wsi->do_bind) {
+			((struct sockaddr_in *)wsi->dns_results_next->ai_addr)->
+						sin_port = htons(wsi->c_port);
+
+			if (connect(sock.sockfd, wsi->dns_results_next->ai_addr,
+				     wsi->dns_results_next->ai_addrlen) == -1) {
+				lwsl_err("%s: conn fd %d fam %d %s:%u failed "
+					 "(salen %d) errno %d\n", __func__,
+					 sock.sockfd,
+					 wsi->dns_results_next->ai_addr->sa_family,
+					 ads ? ads : "null", wsi->c_port,
+					 (int)wsi->dns_results_next->ai_addrlen,
+					 LWS_ERRNO);
+				compatible_close(sock.sockfd);
+				goto resume;
+			}
+
+			memcpy(&wsi->udp->sa, wsi->dns_results_next->ai_addr,
+			       wsi->dns_results_next->ai_addrlen);
+			wsi->udp->salen = wsi->dns_results_next->ai_addrlen;
+		}
+
+		/* complete the udp socket adoption flow */
+
+		lws_addrinfo_clean(wsi);
+		return lws_adopt_descriptor_vhost2(wsi,
+						LWS_ADOPT_RAW_SOCKET_UDP, sock);
+
+resume:
+		wsi->dns_results_next = wsi->dns_results_next->ai_next;
 	}
 
-	/* complete the udp socket adoption flow */
+	lwsl_err("%s: unable to create INET socket\n", __func__);
+	lws_addrinfo_clean(wsi);
 
-	return lws_adopt_descriptor_vhost2(wsi, LWS_ADOPT_RAW_SOCKET_UDP, sock);
 bail:
 	lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS, "adopt udp2 fail");
 
@@ -480,9 +502,6 @@ lws_create_adopt_udp(struct lws_vhost *vhost, const char *ads, int port,
 		     struct lws *parent_wsi)
 {
 #if !defined(LWS_PLAT_OPTEE)
-	struct addrinfo h, *r;
-	char buf[16];
-	int n;
 	struct lws *wsi;
 
 	lwsl_info("%s: %s:%u\n", __func__, ads ? ads : "null", port);
@@ -498,59 +517,59 @@ lws_create_adopt_udp(struct lws_vhost *vhost, const char *ads, int port,
 	wsi->do_bind = !!(flags & LWS_CAUDP_BIND);
 	wsi->c_port = port;
 
-#if defined(LWS_WITH_ASYNC_DNS)
-	if (!ads)
-#endif
+#if !defined(LWS_WITH_ASYNC_DNS)
 	{
+		struct addrinfo *r, h;
+		char buf[16];
+		int n;
+
 		memset(&h, 0, sizeof(h));
 		h.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
 		h.ai_socktype = SOCK_DGRAM;
 		h.ai_protocol = IPPROTO_UDP;
 		h.ai_flags = AI_PASSIVE;
-	#ifdef AI_ADDRCONFIG
+#ifdef AI_ADDRCONFIG
 		h.ai_flags |= AI_ADDRCONFIG;
-	#endif
+#endif
 
 		/* if the dns lookup is synchronous, do the whole thing now */
 		lws_snprintf(buf, sizeof(buf), "%u", port);
 		n = getaddrinfo(ads, buf, &h, &r);
 		if (n) {
-	#if !defined(LWS_PLAT_FREERTOS)
+#if !defined(LWS_PLAT_FREERTOS)
 			lwsl_info("%s: getaddrinfo error: %s\n", __func__,
 				  gai_strerror(n));
-	#else
+#else
 			lwsl_info("%s: getaddrinfo error: %s\n", __func__, strerror(n));
-	#endif
+#endif
 			freeaddrinfo(r);
 			goto bail1;
 		}
-		/* complete it immeditely after the blocking dns lookup finished */
+		/* complete it immediately after the blocking dns lookup
+		 * finished... free r when connect either completed or failed */
 		wsi = lws_create_adopt_udp2(wsi, ads, r, 0, NULL);
-
-		freeaddrinfo(r);
 
 		return wsi;
 	}
-#if defined(LWS_WITH_ASYNC_DNS)
-	/*
-	 * with async dns, use the wsi as the point about which to do the
-	 * dns lookup and have it call the second part when it's done
-	 */
-	if (ads) {
-#ifdef LWS_WITH_IPV6
-		if (lws_async_dns_query(vhost->context, 0, ads, LWS_IPV6_ENABLED(vhost) ?
-						   LWS_ADNS_RECORD_AAAA :
-						   LWS_ADNS_RECORD_A,
 #else
-		if (lws_async_dns_query(vhost->context, 0, ads, LWS_ADNS_RECORD_A,
-#endif
-				lws_create_adopt_udp2, wsi, NULL) == LADNS_RET_FAILED) {
+	if (ads) {
+		/*
+		 * with async dns, use the wsi as the point about which to do
+		 * the dns lookup and have it call the second part when it's
+		 * done.
+		 *
+		 * Keep a refcount on the results and free it when we connected
+		 * or definitively failed.
+		 */
+		if (lws_async_dns_query(vhost->context, 0, ads,
+					LWS_ADNS_RECORD_A,
+					lws_create_adopt_udp2, wsi, NULL) ==
+							     LADNS_RET_FAILED) {
 			lwsl_err("%s: async dns failed\n", __func__);
 			goto bail1;
 		}
 	} else
 		wsi = lws_create_adopt_udp2(wsi, ads, NULL, 0, NULL);
-
 
 	/* dns lookup is happening asynchronously */
 
@@ -566,6 +585,7 @@ bail:
 	return NULL;
 #endif
 }
+#endif
 
 LWS_VISIBLE struct lws *
 lws_adopt_socket_readbuf(struct lws_context *context, lws_sockfd_type accept_fd,

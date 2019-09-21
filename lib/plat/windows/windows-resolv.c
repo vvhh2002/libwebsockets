@@ -37,13 +37,13 @@
 #include "private-lib-core.h"
 
 lws_async_dns_server_check_t
-lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
+lws_plat_asyncdns_init(struct lws_context *context, lws_sockaddr46 *sa46)
 {
 	char	subkey[512], dhcpns[512], ns[512], value[128], *key =
 	"SYSTEM\\ControlSet001\\Services\\Tcpip\\Parameters\\Interfaces";
 	HKEY	hKey, hSub;
 	LONG	err;
-	int	i;
+	int	i, n;
 
 	if ((err = RegOpenKey(HKEY_LOCAL_MACHINE, key, &hKey)) != ERROR_SUCCESS) {
 		lwsl_err("%s: cannot open reg key %s: %d\n", __func__, key, err);
@@ -59,14 +59,15 @@ lws_plat_asyncdns_init(struct lws_context *context, struct sockaddr_in *sa)
 		    &type, value, &len) == ERROR_SUCCESS ||
 		    RegQueryValueEx(hSub, "DhcpNameServer", 0,
 		    &type, value, &len) == ERROR_SUCCESS)) {
-			sa->sin_addr.s_addr = inet_addr(value);
+			n = lws_sa46_parse_numeric_address(value, sa46)
 			RegCloseKey(hSub);
 			RegCloseKey(hKey);
-			return 0;
+			return n == 0 ? LADNS_CONF_SERVER_CHANGED :
+					LADNS_CONF_SERVER_UNKNOWN;
 		}
 	}
 	RegCloseKey(hKey);
 
-	return 1;
+	return LADNS_CONF_SERVER_UNKNOWN;
 }
 

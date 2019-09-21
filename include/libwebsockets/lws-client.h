@@ -39,6 +39,7 @@ enum lws_client_connect_ssl_connection_flags {
 	LCCSCF_ALLOW_SELFSIGNED			= (1 << 1),
 	LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK	= (1 << 2),
 	LCCSCF_ALLOW_EXPIRED			= (1 << 3),
+	LCCSCF_ALLOW_INSECURE			= (1 << 4),
 
 	LCCSCF_PIPELINE				= (1 << 16),
 		/**< Serialize / pipeline multiple client connections
@@ -130,6 +131,11 @@ struct lws_client_connect_info {
 	 *   and can be retrieved by user code with lws_get_opaque_user_data().
 	 *   It's also provided with sequencer messages if the wsi is bound to
 	 *   an lws_seq_t.
+	 */
+
+	const lws_retry_bo_t *retry_and_idle_policy;
+	/**< optional retry and idle policy to apply to this connection.
+	 *   Currently only the idle parts are applied to the connection.
 	 */
 
 	/* Add new things just above here ---^

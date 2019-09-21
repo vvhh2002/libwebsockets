@@ -44,10 +44,85 @@ typedef union {
 	time_t		t;
 } lws_system_arg_t;
 
+/*
+ * Lws view of system state... normal operation from user code perspective is
+ * dependent on implicit (eg, knowing the date for cert validation) and
+ * explicit dependencies.
+ *
+ * Bit of lws and user code can register notification handlers that can enforce
+ * dependent operations before state transitions can complete.
+ */
+
+typedef enum {
+	LWS_SYSTATE_CONTEXT_CREATED = 8, /* context was just created */
+	LWS_SYSTATE_INITIALIZED = 16,	 /* protocols initialized.  Lws itself
+					  * can operate normally */
+	LWS_SYSTATE_TIME_VALID = 24,	 /* ntpclient ran, or hw time valid...
+					  * tls cannot work until we reach here
+					  */
+	LWS_SYSTATE_POLICY_VALID = 32,	 /* user code knows how to operate... it
+					  * can set up prerequisites */
+	LWS_SYSTATE_OPERATIONAL = 40,	 /* user code can operate normally */
+
+	LWS_SYSTATE_POLICY_INVALID = 48, /* user code is changing its policies
+					  * drop everything done with old
+					  * policy, switch to new then enter
+					  * LWS_SYSTATE_POLICY_VALID */
+} lws_system_states_t;
+
+typedef int (*lws_system_notify_t)(struct lws_context *context,
+				   lws_system_states_t current,
+				   lws_system_states_t target);
+
+typedef struct lws_system_notify_link {
+	lws_dll2_t		list;
+	lws_system_notify_t	notify_cb;
+	lws_system_states_t	objected;
+} lws_system_notify_link_t;
+
 typedef struct lws_system_ops {
 	int (*get_info)(lws_system_item_t i, lws_system_arg_t arg, size_t *len);
 	int (*reboot)(void);
+	int (*set_clock)(lws_usec_t us);
 } lws_system_ops_t;
+
+/**
+ * lws_system_reg_notifier() - add dep handler for system state notifications
+ *
+ * \param context: the lws_context
+ * \param notify_link: the handler to add to the notifier linked-list
+ *
+ * Add \p notify_link to the context's list of notification handlers for system
+ * state changes.  The handlers can defeat or take over responsibility for
+ * retrying the change after they have initiated some dependency.
+ */
+
+LWS_EXTERN LWS_VISIBLE void
+lws_system_reg_notifier(struct lws_context *context,
+			lws_system_notify_link_t *notify_link);
+
+/**
+ * lws_system_try_state_transition() - move to state via starting any deps
+ *
+ * \param context: the lws_context
+ * \param target: the state we wish to move to
+ *
+ * If there is nothing on the notify list, this simply moves to the target
+ * state.  If there are notify functions but all return 0 when queried about the
+ * change, again the context just moves to the target state.
+ *
+ * However if any notified function recognizes the requested state is dependent
+ * on it having done something, it can stop the change by returning nonzero, and
+ * take on responsibility for retrying the change when it has succeeded to do
+ * whatever its dependency is.
+ */
+LWS_EXTERN LWS_VISIBLE int
+lws_system_try_state_transition(struct lws_context *context,
+				lws_system_states_t target);
+
+
+LWS_EXTERN LWS_VISIBLE lws_system_states_t
+lws_system_state(struct lws_context *context);
 
 /* wrappers handle NULL members or no ops struct set at all cleanly */
 

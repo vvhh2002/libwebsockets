@@ -39,7 +39,7 @@ typedef enum {
 } lws_async_dns_retcode_t;
 
 typedef struct lws * (*lws_async_dns_cb_t)(struct lws *wsi, const char *ads,
-					   struct addrinfo *result, int n,
+					   const struct addrinfo *result, int n,
 					   void *opaque);
 
 /**
@@ -54,8 +54,26 @@ typedef struct lws * (*lws_async_dns_cb_t)(struct lws *wsi, const char *ads,
  *
  * Starts an asynchronous DNS lookup, on completion the \p cb callback will
  * be called.
+ *
+ * The reference count on the cached object is incremented for every callback
+ * that was called with the cached addrinfo results.
+ *
+ * The cached object can't be evicted until the reference count reaches zero...
+ * use lws_async_dns_freeaddrinfo() to indicate you're finsihed with the
+ * results for each callback that happened with them.
  */
-lws_async_dns_retcode_t
+LWS_VISIBLE LWS_EXTERN lws_async_dns_retcode_t
 lws_async_dns_query(struct lws_context *context, int tsi, const char *name,
 		    adns_query_type_t qtype, lws_async_dns_cb_t cb,
 		    struct lws *wsi, void *opaque);
+
+/**
+ * lws_async_dns_freeaddrinfo() - decrement refcount on cached addrinfo results
+ *
+ * \param ai: the first addrinfo returned as result in the callback
+ *
+ * Decrements the cache object's reference count.  When it reaches zero, the
+ * cached object may be reaped subject to LRU rules.
+ */
+LWS_VISIBLE LWS_EXTERN void
+lws_async_dns_freeaddrinfo(const struct addrinfo *ai);

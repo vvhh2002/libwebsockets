@@ -55,7 +55,7 @@ __lws_reset_wsi(struct lws *wsi)
 		/* we are no longer an active client connection that can piggyback */
 		lws_dll2_remove(&wsi->dll_cli_active_conns);
 
-		lws_dll2_foreach_safe(&wsi->dll2_cli_txn_queue_owner, wsi,
+		lws_dll2_foreach_safe(&wsi->dll2_cli_txn_queue_owner, NULL,
 				      lws_close_trans_q_leader);
 
 		/*
@@ -189,6 +189,8 @@ lws_remove_child_from_any_parent(struct lws *wsi)
 void
 lws_inform_client_conn_fail(struct lws *wsi, void *arg, size_t len)
 {
+	lws_addrinfo_clean(wsi);
+
 	if (wsi->already_did_cce)
 		return;
 
@@ -204,6 +206,22 @@ lws_inform_client_conn_fail(struct lws *wsi, void *arg, size_t len)
 				wsi->user_space, arg, len);
 }
 #endif
+
+void
+lws_addrinfo_clean(struct lws *wsi)
+{
+#if defined(LWS_WITH_CLIENT)
+	if (!wsi->dns_results)
+		return;
+
+#if defined(LWS_WITH_ASYNC_DNS)
+	lws_async_dns_freeaddrinfo(wsi->dns_results);
+#else
+	freeaddrinfo((struct addrinfo *)wsi->dns_results);
+#endif
+	wsi->dns_results = NULL;
+#endif
+}
 
 void
 __lws_close_free_wsi(struct lws *wsi, enum lws_close_status reason,
@@ -228,6 +246,13 @@ __lws_close_free_wsi(struct lws *wsi, enum lws_close_status reason,
 	context = wsi->context;
 	pt = &context->pt[(int)wsi->tsi];
 	lws_stats_bump(pt, LWSSTATS_C_API_CLOSE, 1);
+
+#if defined(LWS_WITH_CLIENT)
+
+	lws_free_set_NULL(wsi->cli_hostname_copy);
+
+	lws_addrinfo_clean(wsi);
+#endif
 
 #if defined(LWS_WITH_HTTP2)
 	if (wsi->h2_stream_immortal)
@@ -345,6 +370,7 @@ __lws_close_free_wsi(struct lws *wsi, enum lws_close_status reason,
 	}
 
 	if (lwsi_state(wsi) == LRS_WAITING_CONNECT ||
+	    lwsi_state(wsi) == LRS_WAITING_DNS ||
 	    lwsi_state(wsi) == LRS_H1C_ISSUE_HANDSHAKE)
 		goto just_kill_connection;
 
@@ -394,6 +420,7 @@ just_kill_connection:
 
 #if defined(LWS_WITH_CLIENT)
 	if ((lwsi_state(wsi) == LRS_WAITING_SERVER_REPLY ||
+	     lwsi_state(wsi) == LRS_WAITING_DNS ||
 	     lwsi_state(wsi) == LRS_WAITING_CONNECT) &&
 	     !wsi->already_did_cce && wsi->protocol)
 		lws_inform_client_conn_fail(wsi,

@@ -60,6 +60,15 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	wsi->context = i->context;
 	wsi->desc.sockfd = LWS_SOCK_INVALID;
 	wsi->seq = i->seq;
+	if (i->retry_and_idle_policy)
+		wsi->retry_policy = i->retry_and_idle_policy;
+	else
+		wsi->retry_policy = &i->context->default_retry;
+
+#if defined(LWS_WITH_DETAILED_LATENCY)
+	if (i->context->detailed_latency_cb)
+		wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
+#endif
 
 #if defined(LWS_WITH_DETAILED_LATENCY)
 	if (i->context->detailed_latency_cb)
