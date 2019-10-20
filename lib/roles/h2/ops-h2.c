@@ -71,7 +71,7 @@ const struct http2_settings lws_h2_stock_settings = { {
 	 *
 	 * Can't pass h2spec with less than 4096 here...
 	 */
-	/* H2SET_ENABLE_PUSH */				   1,
+	/* H2SET_ENABLE_PUSH */				   0,
 	/* H2SET_MAX_CONCURRENT_STREAMS */		  24,
 	/* H2SET_INITIAL_WINDOW_SIZE */		       65535,
 	/* H2SET_MAX_FRAME_SIZE */		       16384,
@@ -400,8 +400,10 @@ rops_write_role_protocol_h2(struct lws *wsi, unsigned char *buf, size_t len,
 #endif
 	)) {
 		//assert(0);
-		lwsl_notice("%s: binning wsistate 0x%x %d\n", __func__,
-				wsi->wsistate, *wp);
+		lwsl_notice("%s: binning wsistate 0x%x %d: %s\n", __func__,
+				(unsigned int)wsi->wsistate, *wp, wsi->protocol ?
+					wsi->protocol->name : "no protocol");
+
 		return 0;
 	}
 
@@ -986,12 +988,14 @@ rops_perform_user_POLLOUT_h2(struct lws *wsi)
 			goto next_child;
 		}
 
+#if defined(LWS_WITH_CLIENT)
 		if (lwsi_state(w) == LRS_H2_WAITING_TO_SEND_HEADERS) {
 			if (lws_h2_client_handshake(w))
 				return -1;
 
 			goto next_child;
 		}
+#endif
 
 #if defined(LWS_WITH_SERVER)
 		if (lwsi_state(w) == LRS_DEFERRING_ACTION) {

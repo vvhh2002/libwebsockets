@@ -524,13 +524,18 @@ struct lws_pollargs {
 
 struct lws_extension; /* needed even with ws exts disabled for create context */
 struct lws_token_limits;
+struct lws_protocols;
 struct lws_context;
 struct lws_tokens;
 struct lws_vhost;
 struct lws;
 
 #include <libwebsockets/lws-dll2.h>
+#include <libwebsockets/lws-timeout-timer.h>
+#include <libwebsockets/lws-state.h>
 #include <libwebsockets/lws-retry.h>
+#include <libwebsockets/lws-adopt.h>
+#include <libwebsockets/lws-network-helper.h>
 #include <libwebsockets/lws-system.h>
 #include <libwebsockets/lws-detailed-latency.h>
 #include <libwebsockets/lws-ws-close.h>
@@ -546,12 +551,9 @@ struct lws;
 #include <libwebsockets/lws-purify.h>
 #include <libwebsockets/lws-misc.h>
 #include <libwebsockets/lws-dsh.h>
-#include <libwebsockets/lws-timeout-timer.h>
 #include <libwebsockets/lws-service.h>
 #include <libwebsockets/lws-write.h>
 #include <libwebsockets/lws-writeable.h>
-#include <libwebsockets/lws-adopt.h>
-#include <libwebsockets/lws-network-helper.h>
 #include <libwebsockets/lws-ring.h>
 #include <libwebsockets/lws-sha1-base64.h>
 #include <libwebsockets/lws-x509.h>

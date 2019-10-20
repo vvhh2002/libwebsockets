@@ -275,9 +275,9 @@ struct lws_context {
 #endif
 
 #if defined(LWS_WITH_NETWORK)
-
 	struct lws_context_per_thread pt[LWS_MAX_SMP];
 	lws_retry_bo_t	default_retry;
+	lws_sorted_usec_list_t sul_system_state;
 
 #if defined(LWS_WITH_HTTP2)
 	struct http2_settings set;
@@ -305,17 +305,27 @@ struct lws_context {
 	struct lws_context_tls tls;
 #endif
 
-#if defined(LWS_WITH_ASYNC_DNS)
+#if defined(LWS_WITH_SYS_ASYNC_DNS)
 	lws_async_dns_t		async_dns;
 #endif
 
-	lws_dll2_owner_t notify_owner; /* lists lws_system_notify_link_t */
+	struct lws_buflist *auth_token[2];
+
+#if defined(LWS_WITH_NETWORK)
+	lws_state_manager_t		mgr_system;
+	lws_state_notify_link_t		protocols_notify;
+#if defined (LWS_WITH_SYS_DHCP_CLIENT)
+	lws_dll2_owner_t		dhcpc_owner;
+					/**< list of ifaces with dhcpc */
+#endif
+#endif
 
 	/* pointers */
 
 	struct lws_vhost *vhost_list;
 	struct lws_vhost *no_listener_vhost_list;
 	struct lws_vhost *vhost_pending_destruction_list;
+	struct lws_vhost *vhost_system;
 
 #if defined(LWS_WITH_SERVER)
 	const char *server_string;
@@ -402,9 +412,6 @@ struct lws_context {
 	pid_t started_with_parent;
 #endif
 	int uid, gid;
-#if defined(LWS_WITH_NETWORK)
-	lws_system_states_t system_state;
-#endif
 
 	int fd_random;
 #if defined(LWS_WITH_DETAILED_LATENCY)
@@ -444,6 +451,8 @@ struct lws_context {
 	unsigned short deprecation_pending_listen_close_count;
 
 	uint8_t max_fi;
+	uint8_t udp_loss_sim_tx_pc;
+	uint8_t udp_loss_sim_rx_pc;
 
 #if defined(LWS_WITH_STATS)
 	uint8_t updated;
@@ -488,7 +497,7 @@ lws_b64_selftest(void);
 
 
 #ifndef LWS_NO_DAEMONIZE
- LWS_EXTERN int get_daemonize_pid();
+ LWS_EXTERN pid_t get_daemonize_pid();
 #else
  #define get_daemonize_pid() (0)
 #endif
@@ -624,6 +633,9 @@ int
 lws_plat_user_colon_group_to_ids(const char *u_colon_g, uid_t *puid, gid_t *pgid);
 #endif
 
+int
+lws_plat_ifname_to_hwaddr(int fd, const char *ifname, uint8_t *hwaddr, int len);
+
 LWS_EXTERN int
 lws_check_byte_utf8(unsigned char state, unsigned char c);
 LWS_EXTERN int LWS_WARN_UNUSED_RESULT
@@ -636,6 +648,10 @@ lws_context_destroy2(struct lws_context *context);
 
 #if !defined(PRIu64)
 #define PRIu64 "llu"
+#endif
+
+#if defined(LWS_WITH_ABSTRACT)
+#include "private-lib-abstract.h"
 #endif
 
 #ifdef __cplusplus

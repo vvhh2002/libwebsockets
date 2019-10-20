@@ -111,41 +111,28 @@ lws_get_addresses(struct lws_vhost *vh, void *ads, char *name,
 	return 0;
 }
 
+const char *
+lws_get_peer_simple_fd(int fd, char *name, int namelen)
+{
+	lws_sockaddr46 sa46;
+	socklen_t len = sizeof(sa46);
 
-LWS_VISIBLE const char *
+	if (getpeername(fd, (struct sockaddr *)&sa46, &len) < 0) {
+		lws_snprintf(name, namelen, "getpeername: %s",
+				strerror(LWS_ERRNO));
+		return name;
+	}
+
+	lws_sa46_write_numeric_address(&sa46, name, namelen);
+
+	return name;
+}
+
+const char *
 lws_get_peer_simple(struct lws *wsi, char *name, int namelen)
 {
-	socklen_t len, olen;
-#ifdef LWS_WITH_IPV6
-	struct sockaddr_in6 sin6;
-#endif
-	struct sockaddr_in sin4;
-	int af = AF_INET;
-	void *p, *q;
-
 	wsi = lws_get_network_wsi(wsi);
-
-#ifdef LWS_WITH_IPV6
-	if (LWS_IPV6_ENABLED(wsi->vhost)) {
-		len = sizeof(sin6);
-		p = &sin6;
-		af = AF_INET6;
-		q = &sin6.sin6_addr;
-	} else
-#endif
-	{
-		len = sizeof(sin4);
-		p = &sin4;
-		q = &sin4.sin_addr;
-	}
-
-	olen = len;
-	if (getpeername(wsi->desc.sockfd, p, &len) < 0 || len > olen) {
-		lwsl_warn("getpeername: %s\n", strerror(LWS_ERRNO));
-		return NULL;
-	}
-
-	return lws_plat_inet_ntop(af, q, name, namelen);
+	return lws_get_peer_simple_fd(wsi->desc.sockfd, name, namelen);
 }
 #endif
 
@@ -413,6 +400,33 @@ lws_retry_get_delay_ms(struct lws_context *context,
 		*conceal = (int)*ctry <= retry->conceal_count;
 
 	return ms;
+}
+
+int
+lws_retry_sul_schedule(struct lws_context *context, int tid,
+		       lws_sorted_usec_list_t *sul,
+		       const lws_retry_bo_t *retry, sul_cb_t cb, uint16_t *ctry)
+{
+	char conceal;
+	uint64_t ms = lws_retry_get_delay_ms(context, retry, ctry, &conceal);
+
+	if (!conceal)
+		return 1;
+
+	lwsl_info("%s: sul %p: scheduling retry in %dms\n", __func__, sul,
+			(int)ms);
+
+	lws_sul_schedule(context, tid, sul, cb, ms * 1000);
+
+	return 0;
+}
+
+int
+lws_retry_sul_schedule_retry_wsi(struct lws *wsi, lws_sorted_usec_list_t *sul,
+				 sul_cb_t cb, uint16_t *ctry)
+{
+	return lws_retry_sul_schedule(wsi->context, wsi->tsi, sul,
+				      wsi->retry_policy, cb, ctry);
 }
 
 #if defined(LWS_WITH_IPV6)
@@ -813,52 +827,8 @@ lws_sa46_compare_ads(const lws_sockaddr46 *sa46a, const lws_sockaddr46 *sa46b)
 	return sa46a->sa4.sin_addr.s_addr != sa46b->sa4.sin_addr.s_addr;
 }
 
-lws_system_states_t
-lws_system_state(struct lws_context *context)
+lws_state_manager_t *
+lws_system_get_state_manager(struct lws_context *context)
 {
-	return context->system_state;
-}
-
-void
-lws_system_reg_notifier(struct lws_context *context,
-			lws_system_notify_link_t *notify_link)
-{
-	lws_dll2_add_head(&notify_link->list, &context->notify_owner);
-}
-
-static int
-_lws_system_transition(struct lws_context *context,
-		      lws_system_states_t target)
-{
-	lws_start_foreach_dll(struct lws_dll2 *, d,
-				context->notify_owner.head) {
-		lws_system_notify_link_t *l =
-			lws_container_of(d, lws_system_notify_link_t, list);
-		if (l->notify_cb(context, context->system_state, target))
-			/* a dependency took responsibility for retry */
-			return 1;
-
-	} lws_end_foreach_dll(d);
-
-	lwsl_info("%s: %d -> %d\n", __func__, context->system_state, target);
-	context->system_state = target;
-
-	return 0;
-}
-
-int
-lws_system_try_state_transition(struct lws_context *context,
-				lws_system_states_t target)
-{
-	int n;
-
-	if (context->system_state == LWS_SYSTATE_POLICY_INVALID ||
-	    target == LWS_SYSTATE_POLICY_INVALID)
-		return _lws_system_transition(context, target);
-
-	do {
-		n = _lws_system_transition(context, context->system_state + 8);
-	} while (!n && context->system_state != target);
-
-	return 0;
+	return &context->mgr_system;
 }

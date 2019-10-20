@@ -987,11 +987,49 @@ lws_cmdline_option(int argc, const char **argv, const char *val)
 				return argv[c + 1];
 			}
 
+			if (argv[c][n] == '=')
+				return &argv[c][n + 1];
 			return argv[c] + n;
 		}
 	}
 
 	return NULL;
+}
+
+static const char * const builtins[] = {
+	"-d",
+	"--udp-tx-loss",
+	"--udp-rx-loss"
+};
+
+void
+lws_cmdline_option_handle_builtin(int argc, const char **argv,
+				  struct lws_context_creation_info *info)
+{
+	const char *p;
+	int n, m, logs = LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE;
+
+	for (n = 0; n < (int)LWS_ARRAY_SIZE(builtins); n++) {
+		p = lws_cmdline_option(argc, argv, builtins[n]);
+		if (!p)
+			continue;
+
+		m = atoi(p);
+
+		switch (n) {
+		case 0:
+			logs = m;
+			break;
+		case 1:
+			info->udp_loss_sim_tx_pc = m;
+			break;
+		case 2:
+			info->udp_loss_sim_rx_pc = m;
+			break;
+		}
+	}
+
+	lws_set_log_level(logs, NULL);
 }
 
 
@@ -1039,21 +1077,4 @@ lws_humanize(char *p, int len, uint64_t v, const lws_humanize_unit_t *schema)
 	return 0;
 }
 
-int
-lws_system_get_info(struct lws_context *context, lws_system_item_t item,
-		    lws_system_arg_t arg, size_t *len)
-{
-	if (!context->system_ops || !context->system_ops->get_info)
-		return 1;
 
-	return context->system_ops->get_info(item, arg, len);
-}
-
-int
-lws_system_reboot(struct lws_context *context)
-{
-	if (!context->system_ops || !context->system_ops->reboot)
-		return 1;
-
-	return context->system_ops->reboot();
-}

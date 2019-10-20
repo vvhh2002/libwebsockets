@@ -46,8 +46,11 @@ option(LWS_WITH_HTTP_STREAM_COMPRESSION "Support HTTP stream compression" OFF)
 option(LWS_WITH_HTTP_BROTLI "Also offer brotli http stream compression (requires LWS_WITH_HTTP_STREAM_COMPRESSION)" OFF)
 option(LWS_WITH_ACME "Enable support for ACME automatic cert acquisition + maintenance (letsencrypt etc)" OFF)
 option(LWS_WITH_HUBBUB "Enable libhubbub rewriting support" OFF)
+option(LWS_WITH_ALSA "Enable alsa audio example" OFF)
 option(LWS_WITH_FTS "Full Text Search support" OFF)
-option(LWS_WITH_ASYNC_DNS "Nonblocking internal IPv4 DNS resolver" OFF)
+option(LWS_WITH_SYS_ASYNC_DNS "Nonblocking internal IPv4 + IPv6 DNS resolver" OFF)
+option(LWS_WITH_SYS_NTPCLIENT "Build in tiny ntpclient good for tls date validation and run via lws_system" OFF)
+option(LWS_WITH_SYS_DHCP_CLIENT "Build in tiny DHCP client" OFF)
 #
 # TLS library options... all except mbedTLS are basically OpenSSL variants.
 #
@@ -139,6 +142,8 @@ option(LWS_WITH_LWS_DSH "Support lws_dsh_t Disordered Shared Heap" OFF)
 option(LWS_CLIENT_HTTP_PROXYING "Support external http proxies for client connections" ON)
 option(LWS_WITH_FILE_OPS "Support file operations vfs" ON)
 option(LWS_WITH_DETAILED_LATENCY "Record detailed latency stats for each read and write" OFF)
+option(LWS_WITH_UDP "Platform supports UDP" ON)
+
 #
 # to use miniz, enable both LWS_WITH_ZLIB and LWS_WITH_MINIZ
 #
@@ -157,6 +162,10 @@ endif()
 
 if (LWS_WITH_ESP32)
 	set(LWS_PLAT_FREERTOS 1)
+endif()
+
+if (LWS_PLAT_FREERTOS OR LWS_PLAT_OPTEE)
+	set(LWS_WITH_UDP 0)
 endif()
 
 if (WIN32 OR LWS_PLAT_FREERTOS)
@@ -990,6 +999,7 @@ set(SOURCES
 	lib/core/lws_dll2.c
 	lib/core/libwebsockets.c
 	lib/core/logs.c
+	lib/system/system.c
 	lib/misc/base64-decode.c
 	lib/misc/lws-ring.c
 )
@@ -1013,6 +1023,7 @@ if (LWS_WITH_NETWORK)
 		lib/core-net/pollfd.c
 		lib/core-net/service.c
 		lib/core-net/sorted-usec-list.c
+		lib/core-net/state.c
 		lib/core-net/stats.c
 		lib/core-net/wsi.c
 		lib/core-net/wsi-timeout.c
@@ -1020,11 +1031,22 @@ if (LWS_WITH_NETWORK)
 		lib/roles/pipe/ops-pipe.c
 	)
 
-	if (LWS_WITH_ASYNC_DNS)
+	if (LWS_WITH_SYS_ASYNC_DNS)
 		list(APPEND SOURCES
 			lib/system/async-dns/async-dns.c
 			lib/system/async-dns/async-dns-parse.c)
 	endif()
+
+	if (LWS_WITH_SYS_NTPCLIENT)
+		list(APPEND SOURCES
+			lib/system/ntpclient/ntpclient.c)
+	endif()
+
+	if (LWS_WITH_SYS_DHCP_CLIENT)
+		list(APPEND SOURCES
+			lib/system/dhcpclient/dhcpclient.c)
+	endif()
+
 
 	if (LWS_WITH_DETAILED_LATENCY)
 		list(APPEND SOURCES
@@ -1368,7 +1390,7 @@ else()
 					lib/plat/unix/unix-sockets.c
 					lib/plat/unix/unix-fds.c
 				)
-				if (LWS_WITH_ASYNC_DNS)
+				if (LWS_WITH_SYS_ASYNC_DNS)
 					if (LWS_PLAT_ANDROID)
 						list(APPEND SOURCES lib/plat/unix/android/android-resolv.c)
 					else()
@@ -1421,6 +1443,8 @@ endif()
 if (LWS_WITH_LIBEV AND LWS_WITH_NETWORK)
 	list(APPEND SOURCES
 		lib/event-libs/libev/libev.c)
+	# libev generates a big mess of warnings with gcc, maintainer claims gcc to blame
+	set_source_files_properties( lib/event-libs/libev/libev.c PROPERTIES COMPILE_FLAGS "-Wno-error" )
 endif()
 
 if (LWS_WITH_LEJP)
@@ -1440,7 +1464,9 @@ endif()
 
 if (LWS_WITH_SMTP)
 	list(APPEND SOURCES
-		lib/abstract/protocols/smtp/smtp.c)
+		lib/abstract/protocols/smtp/smtp.c
+		lib/abstract/protocols/smtp/smtp-sequencer.c
+		)
 endif()
 
 if (LWS_WITH_RANGES)
@@ -1777,7 +1803,10 @@ if (LWS_WITH_SSL)
 		if (NOT OPENSSL_FOUND AND NOT LWS_WITH_BORINGSSL)
 			# TODO: Add support for STATIC also.
 		if (NOT LWS_PLAT_FREERTOS)
+			find_package(PkgConfig QUIET)
+			pkg_check_modules(PC_OPENSSL openssl QUIET)
 			find_package(OpenSSL REQUIRED)
+			list(APPEND OPENSSL_LIBRARIES ${PC_OPENSSL_LIBRARIES})
 		endif()
 			set(OPENSSL_INCLUDE_DIRS "${OPENSSL_INCLUDE_DIR}")
 		endif()
@@ -2178,12 +2207,6 @@ if ((LWS_ROLE_H1 OR LWS_ROLE_H2) AND NOT LWS_WITHOUT_TESTAPPS)
 			target_link_libraries(websockets dl)
 		endif()
 	endif()
-
-	if (LWS_WITH_LIBEV)
-		# libev generates a big mess of warnings with gcc, maintainer claims gcc to blame
-		set_source_files_properties( lib/event-libs/libev/libev.c PROPERTIES COMPILE_FLAGS "-Wno-error" )
-	endif()
-
 
 	if (NOT LWS_WITHOUT_SERVER)
 		#

@@ -76,6 +76,31 @@ LWS_VISIBLE LWS_EXTERN int
 lws_buflist_use_segment(struct lws_buflist **head, size_t len);
 
 /**
+ * lws_buflist_total_len(): Get the total size of the buflist
+ *
+ * \param head: list head
+ *
+ * Returns the total number of bytes held on all segments of the buflist
+ */
+LWS_VISIBLE LWS_EXTERN size_t
+lws_buflist_total_len(struct lws_buflist **head);
+
+/**
+ * lws_buflist_linear_copy(): copy everything out as one without consuming
+ *
+ * \param head: list head
+ * \param ofs: start offset into buflist in bytes
+ * \param buf: buffer to copy linearly into
+ * \param len: length of buffer available
+ *
+ * Returns -1 if len is too small, or bytes copied.  Happy to do partial
+ * copies, returns 0 when there are no more bytes to copy.
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_buflist_linear_copy(struct lws_buflist **head, size_t ofs, uint8_t *buf,
+			size_t len);
+
+/**
  * lws_buflist_destroy_all_segments(): free all segments on the list
  *
  * \param head: list head
@@ -268,6 +293,22 @@ lws_parse_uri(char *p, const char **prot, const char **ads, int *port,
  */
 LWS_VISIBLE LWS_EXTERN const char *
 lws_cmdline_option(int argc, const char **argv, const char *val);
+
+/**
+ * lws_cmdline_option_handle_builtin(): apply standard cmdline options
+ *
+ * \param argc:		count of argument strings
+ * \param argv:		argument strings
+ * \param info:		context creation info
+ *
+ * Applies standard options to the context creation info to save them having
+ * to be (unevenly) copied into the minimal examples.
+ *
+ * Applies default log levels that can be overriden by -d
+ */
+LWS_VISIBLE LWS_EXTERN void
+lws_cmdline_option_handle_builtin(int argc, const char **argv,
+				  struct lws_context_creation_info *info);
 
 /**
  * lws_now_secs(): return seconds since 1970-1-1
@@ -542,9 +583,7 @@ size_t lws_get_allocated_heap(void);
  * lws_is_ssl() - Find out if connection is using SSL
  * \param wsi:	websocket connection to check
  *
- *	Returns 0 if the connection is not using SSL, 1 if using SSL and
- *	using verified cert, and 2 if using SSL but the cert was not
- *	checked (appears for client wsi told to skip check on connection)
+ * Returns nonzero if the wsi is inside a tls tunnel, else zero.
  */
 LWS_VISIBLE LWS_EXTERN int
 lws_is_ssl(struct lws *wsi);
@@ -626,7 +665,6 @@ LWS_VISIBLE LWS_EXTERN const lws_humanize_unit_t humanize_schema_us[];
 LWS_VISIBLE LWS_EXTERN int
 lws_humanize(char *buf, int len, uint64_t value,
 	     const lws_humanize_unit_t *schema);
-
 
 LWS_VISIBLE LWS_EXTERN void
 lws_ser_wu16be(uint8_t *b, uint16_t u);

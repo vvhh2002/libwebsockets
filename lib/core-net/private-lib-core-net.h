@@ -245,7 +245,9 @@ struct client_info_stash {
 };
 #endif
 
+#if defined(LWS_WITH_UDP)
 #define lws_wsi_is_udp(___wsi) (!!___wsi->udp)
+#endif
 
 #define LWS_H2_FRAME_HEADER_LENGTH 9
 
@@ -304,8 +306,7 @@ typedef struct lws_dsh {
 
 typedef struct lws_async_dns {
 	lws_sockaddr46 		sa46; /* nameserver */
-	lws_dll2_owner_t	waiting_send;
-	lws_dll2_owner_t	waiting_resp;
+	lws_dll2_owner_t	waiting;
 	lws_dll2_owner_t	cached;
 	struct lws		*wsi;
 	time_t			time_set_server;
@@ -318,7 +319,7 @@ typedef enum {
 	LADNS_CONF_SERVER_CHANGED
 } lws_async_dns_server_check_t;
 
-#if defined(LWS_WITH_ASYNC_DNS)
+#if defined(LWS_WITH_SYS_ASYNC_DNS)
 void
 lws_aysnc_dns_completed(struct lws *wsi, void *sa, size_t salen,
 			lws_async_dns_retcode_t ret);
@@ -529,11 +530,12 @@ struct lws_vhost {
 	const struct lws_protocol_vhost_options *headers;
 	struct lws_dll2_owner *same_vh_protocol_owner;
 	struct lws_vhost *no_listener_vhost_list;
-	struct lws_dll2_owner abstract_instances_owner;
+	struct lws_dll2_owner abstract_instances_owner;		/* vh lock */
 
 #if defined(LWS_WITH_CLIENT)
 	struct lws_dll2_owner dll_cli_active_conns_owner;
 #endif
+	struct lws_dll2_owner vh_awaiting_socket_owner;
 
 #if defined(LWS_WITH_TLS)
 	struct lws_vhost_tls tls;
@@ -614,7 +616,8 @@ struct lws {
 
 	struct lws_dll2 dll_buflist; /* guys with pending rxflow */
 	struct lws_dll2 same_vh_protocol;
-#if defined(LWS_WITH_ASYNC_DNS)
+	struct lws_dll2 vh_awaiting_socket;
+#if defined(LWS_WITH_SYS_ASYNC_DNS)
 	struct lws_dll2 adns;	/* on adns list of guys to tell result */
 	lws_async_dns_cb_t adns_cb;	/* callback with result */
 #endif
@@ -622,6 +625,10 @@ struct lws {
 	struct lws_dll2 dll_cli_active_conns;
 	struct lws_dll2_owner dll2_cli_txn_queue_owner;
 	struct lws_dll2 dll2_cli_txn_queue;
+#endif
+
+#if defined(LWS_WITH_ACCESS_LOG)
+	char simple_ip[(8 * 5)];
 #endif
 	/* pointers */
 
@@ -643,7 +650,9 @@ struct lws {
 	struct lws_peer *peer;
 #endif
 
+#if defined(LWS_WITH_UDP)
 	struct lws_udp *udp;
+#endif
 #if defined(LWS_WITH_CLIENT)
 	struct client_info_stash *stash;
 	char *cli_hostname_copy;
@@ -677,6 +686,7 @@ struct lws {
 
 #if defined(LWS_WITH_CLIENT)
 	int chunk_remaining;
+	int flags;
 #endif
 	unsigned int cache_secs;
 
@@ -686,8 +696,11 @@ struct lws {
 	unsigned int h2_stream_immortal:1;
 	unsigned int h2_stream_carries_ws:1; /* immortal set as well */
 	unsigned int h2_stream_carries_sse:1; /* immortal set as well */
+	unsigned int h2_acked_settings:1;
 	unsigned int seen_nonpseudoheader:1;
 	unsigned int listener:1;
+	unsigned int pf_packet:1;
+	unsigned int do_broadcast:1;
 	unsigned int user_space_externally_allocated:1;
 	unsigned int socket_is_permanently_unusable:1;
 	unsigned int rxflow_change_to:2;
@@ -737,6 +750,7 @@ struct lws {
 	unsigned int client_pipeline:1;
 	unsigned int client_h2_alpn:1;
 	unsigned int client_h2_substream:1;
+	unsigned int client_h2_migrated:1;
 #endif
 
 #ifdef _WIN32
@@ -744,6 +758,7 @@ struct lws {
 #endif
 
 	uint16_t c_port;
+	uint16_t retry;
 
 	/* chars */
 
@@ -1226,7 +1241,7 @@ __lws_reset_wsi(struct lws *wsi);
 void
 lws_inform_client_conn_fail(struct lws *wsi, void *arg, size_t len);
 
-#if defined(LWS_WITH_ASYNC_DNS)
+#if defined(LWS_WITH_SYS_ASYNC_DNS)
 lws_async_dns_server_check_t
 lws_plat_asyncdns_init(struct lws_context *context, lws_sockaddr46 *sa);
 int
@@ -1234,6 +1249,18 @@ lws_async_dns_init(struct lws_context *context);
 void
 lws_async_dns_deinit(lws_async_dns_t *dns);
 #endif
+
+int
+lws_protocol_init_vhost(struct lws_vhost *vh, int *any);
+int
+_lws_generic_transaction_completed_active_conn(struct lws *wsi);
+
+#define ACTIVE_CONNS_SOLO 0
+#define ACTIVE_CONNS_MUXED 1
+#define ACTIVE_CONNS_QUEUED 2
+
+int
+lws_vhost_active_conns(struct lws *wsi, struct lws **nwsi);
 
 #ifdef __cplusplus
 };

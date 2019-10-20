@@ -34,14 +34,18 @@ typedef enum {
 	LWS_SYSI_HRS_DEVICE_MODEL = 1,
 	LWS_SYSI_HRS_DEVICE_SERIAL,
 	LWS_SYSI_HRS_FIRMWARE_VERSION,
+	LWS_SYSI_HRS_NTP_SERVER,
 
 	LWS_SYSI_USER_BASE = 100
 } lws_system_item_t;
 
-typedef union {
-	const char	*hrs;	/* human readable string */
-	void		*data;
-	time_t		t;
+typedef struct lws_system_arg {
+	union {
+		const char	*hrs;	/* human readable string */
+		void		*data;
+		time_t		t;
+	} u;
+	size_t len;
 } lws_system_arg_t;
 
 /*
@@ -53,76 +57,63 @@ typedef union {
  * dependent operations before state transitions can complete.
  */
 
-typedef enum {
-	LWS_SYSTATE_CONTEXT_CREATED = 8, /* context was just created */
-	LWS_SYSTATE_INITIALIZED = 16,	 /* protocols initialized.  Lws itself
+typedef enum { /* keep system_state_names[] in sync in context.c */
+	LWS_SYSTATE_UNKNOWN,
+
+	LWS_SYSTATE_CONTEXT_CREATED,	 /* context was just created */
+	LWS_SYSTATE_INITIALIZED,	 /* protocols initialized.  Lws itself
 					  * can operate normally */
-	LWS_SYSTATE_TIME_VALID = 24,	 /* ntpclient ran, or hw time valid...
+	LWS_SYSTATE_IFACE_COLDPLUG,	 /* existing net ifaces iterated */
+	LWS_SYSTATE_DHCP,		 /* at least one net iface configured */
+	LWS_SYSTATE_TIME_VALID,		 /* ntpclient ran, or hw time valid...
 					  * tls cannot work until we reach here
 					  */
-	LWS_SYSTATE_POLICY_VALID = 32,	 /* user code knows how to operate... it
-					  * can set up prerequisites */
-	LWS_SYSTATE_OPERATIONAL = 40,	 /* user code can operate normally */
+	LWS_SYSTATE_POLICY_VALID,	 /* user code knows how to operate... */
+	LWS_SYSTATE_REGISTERED,		 /* device has an identity... */
+	LWS_SYSTATE_AUTH1,		 /* identity used for main auth token */
+	LWS_SYSTATE_AUTH2,		 /* identity used for optional auth */
 
-	LWS_SYSTATE_POLICY_INVALID = 48, /* user code is changing its policies
+	LWS_SYSTATE_OPERATIONAL,	 /* user code can operate normally */
+
+	LWS_SYSTATE_POLICY_INVALID,	/* user code is changing its policies
 					  * drop everything done with old
 					  * policy, switch to new then enter
 					  * LWS_SYSTATE_POLICY_VALID */
 } lws_system_states_t;
 
-typedef int (*lws_system_notify_t)(struct lws_context *context,
-				   lws_system_states_t current,
-				   lws_system_states_t target);
+typedef enum {
+	LWSSYS_AUTH_GET,
+	LWSSYS_AUTH_TOTAL_LENGTH,
+	LWSSYS_AUTH_APPEND,
+	LWSSYS_AUTH_FREE,
+} lws_system_auth_op_t;
 
-typedef struct lws_system_notify_link {
-	lws_dll2_t		list;
-	lws_system_notify_t	notify_cb;
-	lws_system_states_t	objected;
-} lws_system_notify_link_t;
+typedef int (*lws_system_auth_cb_t)(struct lws_context *context, int idx,
+				    size_t ofs, uint8_t *buf, size_t *plen,
+				    lws_system_auth_op_t set);
 
 typedef struct lws_system_ops {
-	int (*get_info)(lws_system_item_t i, lws_system_arg_t arg, size_t *len);
+	int (*get_info)(lws_system_item_t i, lws_system_arg_t *arg);
 	int (*reboot)(void);
 	int (*set_clock)(lws_usec_t us);
+	lws_system_auth_cb_t auth;
+	/**< Systemwide auth token management. For set, content may be appended
+	 * incrementally safely.  For get, content may be read out in arbitrary
+	 * fragments using \p ofs. */
 } lws_system_ops_t;
 
 /**
- * lws_system_reg_notifier() - add dep handler for system state notifications
+ * lws_system_get_state_manager() - return the state mgr object for system state
  *
  * \param context: the lws_context
- * \param notify_link: the handler to add to the notifier linked-list
  *
- * Add \p notify_link to the context's list of notification handlers for system
- * state changes.  The handlers can defeat or take over responsibility for
- * retrying the change after they have initiated some dependency.
+ * The returned pointer can be used with the lws_state_ apis
  */
 
-LWS_EXTERN LWS_VISIBLE void
-lws_system_reg_notifier(struct lws_context *context,
-			lws_system_notify_link_t *notify_link);
-
-/**
- * lws_system_try_state_transition() - move to state via starting any deps
- *
- * \param context: the lws_context
- * \param target: the state we wish to move to
- *
- * If there is nothing on the notify list, this simply moves to the target
- * state.  If there are notify functions but all return 0 when queried about the
- * change, again the context just moves to the target state.
- *
- * However if any notified function recognizes the requested state is dependent
- * on it having done something, it can stop the change by returning nonzero, and
- * take on responsibility for retrying the change when it has succeeded to do
- * whatever its dependency is.
- */
-LWS_EXTERN LWS_VISIBLE int
-lws_system_try_state_transition(struct lws_context *context,
-				lws_system_states_t target);
+LWS_EXTERN LWS_VISIBLE lws_state_manager_t *
+lws_system_get_state_manager(struct lws_context *context);
 
 
-LWS_EXTERN LWS_VISIBLE lws_system_states_t
-lws_system_state(struct lws_context *context);
 
 /* wrappers handle NULL members or no ops struct set at all cleanly */
 
@@ -132,29 +123,103 @@ lws_system_state(struct lws_context *context);
  * \param context: the lws_context
  * \param item: which information to fetch
  * \param arg: where to place the result
- * \param len: incoming: max length of result, outgoing: used length of result
  *
  * This queries a standardized information-fetching ops struct that can be
  * applied to the context... the advantage is it allows you to get common items
  * of information like a device serial number writing the code once, even if the
- * actual serial number muse be fetched in wildly different ways depending on
+ * actual serial number must be fetched in wildly different ways depending on
  * the exact platform it's running on.
  *
- * Set arg and *len on entry to be the result location and the max length that
- * can be used there, on seccessful exit *len is set to the actual length and
- * 0 is returned.  On error, 1 is returned.
+ * Point arg to your lws_system_arg_t, on return it will be set.  It doesn't
+ * copy the content just sets pointer and length.
  */
 LWS_EXTERN LWS_VISIBLE int
 lws_system_get_info(struct lws_context *context, lws_system_item_t item,
-		    lws_system_arg_t arg, size_t *len);
+		    lws_system_arg_t *arg);
 
+
+#define LWSSYSGAUTH_HEX (1 << 0)
 
 /**
- * lws_system_reboot() - if provided, use the lws_system ops to reboot
+ * lws_system_get_auth() - retreive system auth token helper
+ *
+ * \param context: the lws_context
+ * \param idx: which auth token
+ * \param ofs: offset in source to copy from
+ * \param buf: where to store result, or NULL
+ * \param buflen: size of buf
+ * \param flags: how to write the result
+ *
+ * Attempts to fill buf with the requested system auth token.  If flags has
+ * LWSSYSGAUTH_HEX set, then the auth token is written as pairs of hex chars
+ * for each byte.  If not set, written as 1 byte per byte binary.
+ *
+ * If buf is NULL, returns <= 0 if auth token is not set or > 0 if set, without
+ * writing anything.  *buflen is still set to the size of the auth token.
+ */
+LWS_EXTERN LWS_VISIBLE int
+lws_system_get_auth(struct lws_context *context, int idx, size_t ofs,
+		    uint8_t *buf, size_t buflen, int flags);
+
+/**
+ * lws_system_get_ops() - get ahold of the system ops struct from the context
  *
  * \param context: the lws_context
  *
- * If possible, the system will reboot.  Otherwise returns 1.
+ * Returns the system ops struct.  It may return NULL and if not, anything in
+ * there may be NULL.
  */
-LWS_EXTERN LWS_VISIBLE int
-lws_system_reboot(struct lws_context *context);
+LWS_EXTERN LWS_VISIBLE const lws_system_ops_t *
+lws_system_get_ops(struct lws_context *context);
+
+/**
+ * lws_system_context_from_system_mgr() - return context from system state mgr
+ *
+ * \param mgr: pointer to specifically the system state mgr
+ *
+ * Returns the context from the system state mgr.  Helper since the lws_context
+ * is opaque.
+ */
+LWS_EXTERN LWS_VISIBLE struct lws_context *
+lws_system_context_from_system_mgr(lws_state_manager_t *mgr);
+
+typedef int (*dhcpc_cb_t)(void *opaque, int af, uint8_t *ip, int ip_len);
+
+/**
+ * lws_dhcpc_request() - add a network interface to dhcpc management
+ *
+ * \param c: the lws_context
+ * \param i: the interface name, like "eth0"
+ * \param af: address family
+ * \param cb: the change callback
+ * \param opaque: opaque pointer given to the callback
+ *
+ * Register a network interface as being managed by DHCP.  lws will proceed to
+ * try to acquire an IP.  Requires LWS_WITH_SYS_DHCP_CLIENT at cmake.
+ */
+int
+lws_dhcpc_request(struct lws_context *c, const char *i, int af, dhcpc_cb_t cb,
+		void *opaque);
+
+/**
+ * lws_dhcpc_remove() - remove a network interface to dhcpc management
+ *
+ * \param context: the lws_context
+ * \param iface: the interface name, like "eth0"
+ *
+ * Remove handling of the network interface from dhcp.
+ */
+int
+lws_dhcpc_remove(struct lws_context *context, const char *iface);
+
+/**
+ * lws_dhcpc_status() - has any interface reached BOUND state
+ *
+ * \param context: the lws_context
+ * \param sa46: set to a DNS server from a bound interface, or NULL
+ *
+ * Returns 1 if any network interface managed by dhcpc has reached the BOUND
+ * state (has acquired an IP, gateway and DNS server), otherwise 0.
+ */
+int
+lws_dhcpc_status(struct lws_context *context, lws_sockaddr46 *sa46);
