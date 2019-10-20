@@ -16,6 +16,65 @@ various scenarios, CC0-licensed (public domain) for cut-and-paste, allow you to 
 News
 ----
 
+## `lws_system`: DHCP client
+
+DHCP client is now another network service that can be integrated into lws, with
+`LWS_WITH_SYS_DHCP_CLIENT` at CMake.  When enabled, the `lws_system` state
+is held at `DHCP` until at least one registered network interface acquires a
+usable set of DHCP information including ip, subnet mask, router / gateway
+address and at least one DNS server.
+
+See the [api-test-dhcp](https://libwebsockets.org/git/libwebsockets/tree/minimal-examples/api-tests/api-test-dhcpc) Minimal Example for how to use.
+
+## UDP integration with `lws_retry`
+
+UDP support in lws has new helper that allow `lws_retry` to be applied for retry,
+and the ability to synthesize rx and tx udp packetloss systemwide to confirm
+retry strategies.  Since multiple transactions may be in flight on one UDP
+socket, the support relies on an `lws_sul` in the transaction object to manage
+the transaction retries individually.
+
+See `READMEs/README.udp.md` for details.
+
+## `lws_system`: system state and notification handlers
+
+Lws now has the concept of systemwide state held in the context... this is to
+manage that there may be multiple steps that need the network before it's possible
+for the user code to operate normally.  The steps defined are
+
+`CONTEXT_CREATED`, `INITIALIZED`, `IFACE_COLDPLUG`, `DHCP`, `TIME_VALID`, `POLICY_VALID`,
+`REGISTERED`, `AUTH1`, `AUTH2`, `OPERATIONAL` and `POLICY_INVALID`.  OPERATIONAL is the
+state where user code can run normally.
+
+User and other parts of lws can hook notifier callbacks to receive and be able to
+veto system state changes, either definitively or because they have been triggered
+to perform a step asynchronously and will move the state on themselves when it
+completes.
+
+By default just after context creation, lws attempts to move straight to OPERATIONAL.
+If no notifier interecepts it, it will succeed to do that and operate in a
+backwards-compatible way.  Enabling various features like lws ntpclient also enable
+notifiers that hold progress at the related state until their operation completes
+successfully, eg, not able to enter `TIME_VALID` until ntpclient has the time.
+
+See `READMEs/README.lws_system.md` for details.
+
+## `lws_system`: HAL ops struct
+
+Lws allows you to define a standardized ops struct at context creation time so your
+user code can get various information like device serial number without embedding
+system-specific code throughout the user code.  It can also perform some generic
+functions like requesting a device reboot.
+
+See `READMEs/README.lws_system.md` for details.
+
+## `lws_system`: ntpclient
+
+Optional lws system service enabled by cmake `-DLWS_WITH_SYS_NTPCLIENT` intercepts
+the `lws_system` `TIME_VALID` state and performs ntpclient to get the date and time
+before entering `TIME_VALID`.  This allows user code to validate tls certificates
+correctly knowing the current date and time by the time it reached OPERATIONAL.
+
 ## Connection Validity tracking
 
 Lws now allows you to apply a policy for how long a network connection may go
@@ -30,13 +89,13 @@ that it observed traffic that must mean the connection is passing traffic in
 both directions to and from the peer.  In the absence of these confirmations
 lws will generate PINGs and take PONGs as the indication of validity.
 
-## Async DNS support
+## `lws_system`: Async DNS support
 
-Master now provides optional Asynchronous (ie, nonblocking) DNS resolving.  Enable
-with `-DLWS_WITH_ASYNC_DNS=1` at cmake.  This provides a quite sophisticated
-ipv4 + ipv6 capable resolver that autodetects the dns server on several platforms
-and operates a UDP socket to its port 53 to produce and parse DNS packets
-from the event loop.  And of course, it's extremely compact.
+Master now provides optional Asynchronous (ie, nonblocking) recursive DNS resolving.
+Enable with `-DLWS_WITH_SYS_ASYNC_DNS=1` at cmake.  This provides a quite
+sophisticated ipv4 + ipv6 capable resolver that autodetects the dns server on
+several platforms and operates a UDP socket to its port 53 to produce and parse DNS
+packets from the event loop.  And of course, it's extremely compact.
 
 It broadly follows the getaddrinfo style api, but instead of creating the results
 on the heap for each caller, it caches a single result according to the TTL and

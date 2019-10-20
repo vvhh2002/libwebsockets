@@ -31,6 +31,8 @@ typedef struct lws_retry_bo {
 	uint8_t		jitter_percent;		/* % additional random jitter */
 } lws_retry_bo_t;
 
+#define LWS_RETRY_CONCEAL_ALWAYS (0xffff)
+
 /**
  * lws_retry_get_delay_ms() - get next delay from backoff table
  *
@@ -54,3 +56,40 @@ LWS_VISIBLE LWS_EXTERN unsigned int
 lws_retry_get_delay_ms(struct lws_context *context, const lws_retry_bo_t *retry,
 		       uint16_t *ctry, char *conceal);
 
+/**
+ * lws_retry_sul_schedule() - schedule a sul according to the backoff table
+ *
+ * \param lws_context: the lws context (used for getting random)
+ * \param sul: pointer to the sul to schedule
+ * \param retry: the retry backoff table we are using, or NULL for default
+ * \param cb: the callback for when the sul schedule time arrives
+ * \param ctry: pointer to the try counter
+ *
+ * Helper that combines interpreting the retry table with scheduling a sul to
+ * the computed delay.  If conceal is not set, it will not schedule the sul
+ * and just return 1.  Otherwise the sul is scheduled and it returns 0.
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_retry_sul_schedule(struct lws_context *context, int tid,
+		       lws_sorted_usec_list_t *sul, const lws_retry_bo_t *retry,
+		       sul_cb_t cb, uint16_t *ctry);
+
+/**
+ * lws_retry_sul_schedule_retry_wsi() - retry sul schedule helper using wsi
+ *
+ * \param wsi: the wsi to set the hrtimer sul on to the next retry interval
+ * \param sul: pointer to the sul to schedule
+ * \param cb: the callback for when the sul schedule time arrives
+ * \param ctry: pointer to the try counter
+ *
+ * Helper that uses context, tid and retry policy from a wsi to call
+ * lws_retry_sul_schedule.
+ *
+ * Since a udp connection can have many writes in flight, the retry count and
+ * the sul used to track each thing that wants to be written have to be handled
+ * individually, not the wsi.  But the retry policy and the other things can
+ * be filled in from the wsi conveniently.
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_retry_sul_schedule_retry_wsi(struct lws *wsi, lws_sorted_usec_list_t *sul,
+				 sul_cb_t cb, uint16_t *ctry);

@@ -60,6 +60,7 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	wsi->context = i->context;
 	wsi->desc.sockfd = LWS_SOCK_INVALID;
 	wsi->seq = i->seq;
+	wsi->flags = i->ssl_connection;
 	if (i->retry_and_idle_policy)
 		wsi->retry_policy = i->retry_and_idle_policy;
 	else
@@ -70,15 +71,13 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 		wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
 #endif
 
-#if defined(LWS_WITH_DETAILED_LATENCY)
-	if (i->context->detailed_latency_cb)
-		wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
-#endif
-
 	wsi->vhost = NULL;
-	if (!i->vhost)
-		lws_vhost_bind_wsi(i->context->vhost_list, wsi);
-	else
+	if (!i->vhost) {
+		struct lws_vhost *v = i->context->vhost_list;
+		if (v && !strcmp(v->name, "system"))
+			v = v->vhost_next;
+		lws_vhost_bind_wsi(v, wsi);
+	} else
 		lws_vhost_bind_wsi(i->vhost, wsi);
 
 	if (!wsi->vhost) {
@@ -163,6 +162,12 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 		p = lws_vhost_name_to_protocol(wsi->vhost, local);
 		if (p)
 			lws_bind_protocol(wsi, p, __func__);
+		else
+			lwsl_err("%s: unknown protocol %s\n", __func__, local);
+
+		lwsl_info("%s: wsi %p: %s %s entry\n",
+			    __func__, wsi, wsi->role_ops->name,
+			    wsi->protocol ? wsi->protocol->name : "none");
 	}
 
 	/*
@@ -278,13 +283,17 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 
 	/* PHASE 8: notify protocol with role-specific connected callback */
 
-	lwsl_debug("%s: wsi %p: cb %d to %s %s\n", __func__,
-			wsi, wsi->role_ops->adoption_cb[0],
-			wsi->role_ops->name, wsi->protocol->name);
+	/* raw socket doesn't want this... not sure if any want this */
+	if (wsi->role_ops != &role_ops_raw_skt) {
+		lwsl_debug("%s: wsi %p: cb %d to %s %s\n", __func__,
+				wsi, wsi->role_ops->adoption_cb[0],
+				wsi->role_ops->name, wsi->protocol->name);
 
-	wsi->protocol->callback(wsi,
-			wsi->role_ops->adoption_cb[0],
-			wsi->user_space, NULL, 0);
+		wsi->protocol->callback(wsi,
+				wsi->role_ops->adoption_cb[0],
+				wsi->user_space, NULL, 0);
+	}
+
 
 #if defined(LWS_WITH_HUBBUB)
 	if (i->uri_replace_to)

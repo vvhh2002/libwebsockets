@@ -446,6 +446,9 @@ start_ws_handshake:
 			lws_set_timeout(wsi,
 					PENDING_TIMEOUT_CLIENT_ISSUE_PAYLOAD,
 					context->timeout_secs);
+
+			if (wsi->flags & LCCSCF_HTTP_X_WWW_FORM_URLENCODED)
+				lws_callback_on_writable(wsi);
 #if defined(LWS_WITH_HTTP_PROXY)
 			if (wsi->http.proxy_clientside)
 				lws_callback_on_writable(wsi);
@@ -619,6 +622,7 @@ int LWS_WARN_UNUSED_RESULT
 lws_http_transaction_completed_client(struct lws *wsi)
 {
 	struct lws *wsi_eff = lws_client_wsi_effective(wsi);
+	int n;
 
 	lwsl_info("%s: wsi: %p, wsi_eff: %p (%s)\n", __func__, wsi, wsi_eff,
 		    wsi_eff->protocol->name);
@@ -631,55 +635,13 @@ lws_http_transaction_completed_client(struct lws *wsi)
 		return -1;
 	}
 
-	/*
-	 * Are we constitutionally capable of having a queue, ie, we are on
-	 * the "active client connections" list?
-	 *
-	 * If not, that's it for us.
-	 */
-
-	if (lws_dll2_is_detached(&wsi->dll_cli_active_conns))
-		return -1;
-
-	/* if this was a queued guy, close him and remove from queue */
-
-	if (wsi->transaction_from_pipeline_queue) {
-		lwsl_debug("closing queued wsi %p\n", wsi_eff);
-		/* so the close doesn't trigger a CCE */
-		wsi_eff->already_did_cce = 1;
-		__lws_close_free_wsi(wsi_eff,
-			LWS_CLOSE_STATUS_CLIENT_TRANSACTION_DONE,
-			"queued client done");
-	}
+	n = _lws_generic_transaction_completed_active_conn(wsi);
 
 	_lws_header_table_reset(wsi->http.ah);
-
-	/* after the first one, they can only be coming from the queue */
-	wsi->transaction_from_pipeline_queue = 1;
-
 	wsi->http.rx_content_length = 0;
-	wsi->hdr_parsing_completed = 0;
 
-	/* is there a new tail after removing that one? */
-	wsi_eff = lws_client_wsi_effective(wsi);
-
-	/*
-	 * Do we have something pipelined waiting?
-	 * it's OK if he hasn't managed to send his headers yet... he's next
-	 * in line to do that...
-	 */
-	if (wsi_eff == wsi) {
-		/*
-		 * Nothing pipelined... we should hang around a bit
-		 * in case something turns up...
-		 */
-		lwsl_info("%s: nothing pipelined waiting\n", __func__);
-		lwsi_set_state(wsi, LRS_IDLING);
-
-		lws_set_timeout(wsi, PENDING_TIMEOUT_CLIENT_CONN_IDLE, 5);
-
+	if (!n)
 		return 0;
-	}
 
 	/*
 	 * H1: we can serialize the queued guys into the same ah
@@ -891,6 +853,7 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 			 */
 			lwsl_err("Redirect failed\n");
 			cce = "HS: Redirect failed";
+			/* coverity[reverse_inull] */
 			if (wsi)
 				goto bail3;
 
@@ -1080,13 +1043,75 @@ bail2:
 }
 #endif
 
+/*
+ * set the boundary string and the content-type for client multipart mime
+ */
+
+uint8_t *
+lws_http_multipart_headers(struct lws *wsi, uint8_t *p)
+{
+	char buf[10], arg[48];
+	int n;
+
+	lws_get_random(wsi->context, (uint8_t *)buf, sizeof(buf));
+	lws_b64_encode_string(buf, sizeof(buf),
+			       wsi->http.multipart_boundary,
+			       sizeof(wsi->http.multipart_boundary));
+
+	n = lws_snprintf(arg, sizeof(arg), "multipart/form-data;boundary=%s",
+			 wsi->http.multipart_boundary);
+
+	if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+					 (uint8_t *)arg, n, &p, p + 100))
+		return NULL;
+
+	wsi->http.multipart = wsi->http.multipart_issue_boundary = 1;
+
+	return p;
+}
+
+int
+lws_client_http_multipart(struct lws *wsi, const char *name,
+			  const char *filename, const char *content_type,
+			  char **p, char *end)
+{
+	/*
+	 * Client conn must have been created with LCCSCF_HTTP_MULTIPART_MIME
+	 * flag to use this api
+	 */
+	assert(wsi->http.multipart);
+
+	if (!name) {
+		*p += lws_snprintf((char *)(*p), lws_ptr_diff(end, p),
+					"\xd\xa--%s--\xd\xa",
+					wsi->http.multipart_boundary);
+
+		return 0;
+	}
+
+	*p += lws_snprintf((char *)(*p), lws_ptr_diff(end, p), "\xd\xa--%s\xd\xa"
+				    "Content-Disposition: form-data; "
+				      "name=\"%s\"",
+				      wsi->http.multipart_boundary, name);
+	if (filename)
+		*p += lws_snprintf((char *)(*p), lws_ptr_diff(end, p),
+				   "; filename=\"%s\"", filename);
+
+	if (content_type)
+		*p += lws_snprintf((char *)(*p), lws_ptr_diff(end, p), "\xd\xa"
+				"Content-Type: %s", content_type);
+
+	*p += lws_snprintf((char *)(*p), lws_ptr_diff(end, p), "\xd\xa\xd\xa");
+
+	return *p == end;
+}
+
 char *
 lws_generate_client_handshake(struct lws *wsi, char *pkt)
 {
-	char *p = pkt;
-	const char *meth;
-	const char *pp = lws_hdr_simple_ptr(wsi,
+	const char *meth, *pp = lws_hdr_simple_ptr(wsi,
 				_WSI_TOKEN_CLIENT_SENT_PROTOCOLS);
+	char *p = pkt, *p1;
 
 	meth = lws_hdr_simple_ptr(wsi, _WSI_TOKEN_CLIENT_METHOD);
 	if (!meth) {
@@ -1159,6 +1184,13 @@ lws_generate_client_handshake(struct lws *wsi, char *pkt)
 						     _WSI_TOKEN_CLIENT_ORIGIN));
 	}
 
+	if (wsi->flags & LCCSCF_HTTP_MULTIPART_MIME) {
+		p1 = (char *)lws_http_multipart_headers(wsi, (uint8_t *)p);
+		if (!p1)
+			return NULL;
+		p = p1;
+	}
+
 #if defined(LWS_WITH_HTTP_PROXY)
 	if (wsi->parent &&
 	    lws_hdr_total_length(wsi->parent, WSI_TOKEN_HTTP_CONTENT_LENGTH)) {
@@ -1199,6 +1231,12 @@ lws_generate_client_handshake(struct lws *wsi, char *pkt)
 			wsi->user_space, &p,
 			(pkt + wsi->context->pt_serv_buf_size) - p - 12))
 		return NULL;
+
+	if (wsi->flags & LCCSCF_HTTP_X_WWW_FORM_URLENCODED) {
+		p += lws_snprintf(p, 128, "Content-Type: application/x-www-form-urlencoded\x0d\x0a");
+		p += lws_snprintf(p, 128, "Content-Length: %lu\x0d\x0a", wsi->http.writeable_len);
+		lws_client_http_body_pending(wsi, 1);
+	}
 
 	p += lws_snprintf(p, 4, "\x0d\x0a");
 

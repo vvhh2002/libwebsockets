@@ -121,7 +121,8 @@ lws_urldecode_s_create(struct lws_spa *spa, struct lws *wsi, char *out,
 	/* multipart/form-data;
 	 * boundary=----WebKitFormBoundarycc7YgAPEIHvgE9Bf */
 
-		if (!strncmp(buf, "multipart/form-data", 19)) {
+		if (!strncmp(buf, "multipart/form-data", 19) ||
+		    !strncmp(buf, "multipart/related", 17)) {
 			s->multipart_form_data = 1;
 			s->state = MT_LOOK_BOUND_IN;
 			s->mp = 2;
@@ -186,7 +187,8 @@ lws_urldecode_s_process(struct lws_urldecode_stateful *s, const char *in,
 				continue;
 			}
 			if (s->pos >= (int)sizeof(s->name) - 1) {
-				lwsl_notice("Name too long\n");
+				lwsl_hexdump_notice(s->name, s->pos);
+				lwsl_notice("Name too long...\n");
 				return -1;
 			}
 			s->name[s->pos++] = *in++;

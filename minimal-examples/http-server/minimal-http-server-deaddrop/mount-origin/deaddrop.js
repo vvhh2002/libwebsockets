@@ -154,7 +154,7 @@
 	}
 
 	function upl_button(e) {
-		var fi = document.getElementById("file"),
+		var fi = document.getElementById("file");
 
 		clear_errors();
 		e.preventDefault();

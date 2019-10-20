@@ -40,6 +40,12 @@ enum lws_client_connect_ssl_connection_flags {
 	LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK	= (1 << 2),
 	LCCSCF_ALLOW_EXPIRED			= (1 << 3),
 	LCCSCF_ALLOW_INSECURE			= (1 << 4),
+	LCCSCF_H2_QUIRK_NGHTTP2_END_STREAM	= (1 << 5),
+	LCCSCF_H2_QUIRK_OVERFLOWS_TXCR		= (1 << 6),
+	LCCSCF_H2_AUTH_BEARER			= (1 << 7),
+	LCCSCF_H2_HEXIFY_AUTH_TOKEN		= (1 << 8),
+	LCCSCF_HTTP_MULTIPART_MIME		= (1 << 9),
+	LCCSCF_HTTP_X_WWW_FORM_URLENCODED	= (1 << 10),
 
 	LCCSCF_PIPELINE				= (1 << 16),
 		/**< Serialize / pipeline multiple client connections
@@ -48,7 +54,8 @@ enum lws_client_connect_ssl_connection_flags {
 		 * HTTP/1.0: possible if Keep-Alive: yes sent by server
 		 * HTTP/1.1: always possible... uses pipelining
 		 * HTTP/2:   always possible... uses parallel streams
-		 * */
+		 */
+	LCCSCF_MUXABLE_STREAM			= (1 << 17),
 };
 
 /** struct lws_client_connect_info - parameters to connect with when using
@@ -240,7 +247,7 @@ lws_tls_client_vhost_extra_cert_mem(struct lws_vhost *vh,
 		const uint8_t *der, size_t der_len);
 
 /**
- * lws_client_http_body_pending() - control if client connection neeeds to send body
+ * lws_client_http_body_pending() - control if client connection needs to send body
  *
  * \param wsi: client connection
  * \param something_left_to_send: nonzero if need to send more body, 0 (default)
@@ -260,5 +267,24 @@ lws_tls_client_vhost_extra_cert_mem(struct lws_vhost *vh,
  */
 LWS_VISIBLE LWS_EXTERN void
 lws_client_http_body_pending(struct lws *wsi, int something_left_to_send);
+
+/**
+ * lws_client_http_multipart() - issue appropriate multipart header or trailer
+ *
+ * \param wsi: client connection
+ * \param name: multipart header name field, or NULL if end of multipart
+ * \param filename: multipart header filename field, or NULL if none
+ * \param content_type: multipart header content-type part, or NULL if none
+ * \param p: pointer to position in buffer
+ * \param end: end of buffer
+ *
+ * This issues a multipart mime boundary, or terminator if name = NULL.
+ *
+ * Returns 0 if OK or nonzero if couldn't fit in buffer
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_client_http_multipart(struct lws *wsi, const char *name,
+			  const char *filename, const char *content_type,
+			  char **p, char *end);
 
 ///@}

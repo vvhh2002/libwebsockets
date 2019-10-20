@@ -59,8 +59,8 @@ lws_buflist_append_segment(struct lws_buflist **head, const uint8_t *buf,
 	lwsl_info("%s: len %u first %d %p\n", __func__, (unsigned int)len,
 					      first, p);
 
-	nbuf = (struct lws_buflist *)lws_malloc(
-			sizeof(struct lws_buflist) + len + LWS_PRE, __func__);
+	nbuf = (struct lws_buflist *)lws_malloc(sizeof(struct lws_buflist) +
+						len + LWS_PRE + 1, __func__);
 	if (!nbuf) {
 		lwsl_err("%s: OOM\n", __func__);
 		return -1;
@@ -156,6 +156,45 @@ lws_buflist_use_segment(struct lws_buflist **head, size_t len)
 		return 0;
 
 	return lws_buflist_next_segment_len(head, NULL);
+}
+
+size_t
+lws_buflist_total_len(struct lws_buflist **head)
+{
+	struct lws_buflist *p = *head;
+	size_t size = 0;
+
+	while (p) {
+		size += p->len;
+		p = p->next;
+	}
+
+	return size;
+}
+
+int
+lws_buflist_linear_copy(struct lws_buflist **head, size_t ofs, uint8_t *buf,
+			size_t len)
+{
+	struct lws_buflist *p = *head;
+	uint8_t *obuf = buf;
+	size_t s;
+
+	while (p && len) {
+		if (ofs < p->len) {
+			s = p->len - ofs;
+			if (s > len)
+				s = len;
+			memcpy(buf, ((uint8_t *)&p[1]) + ofs, s);
+			len -= s;
+			buf += s;
+			ofs = 0;
+		} else
+			ofs -= p->len;
+		p = p->next;
+	}
+
+	return lws_ptr_diff(buf, obuf);
 }
 
 #if defined(_DEBUG)
