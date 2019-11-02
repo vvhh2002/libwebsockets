@@ -256,7 +256,7 @@ __lws_sul_insert(lws_dll2_owner_t *own, lws_sorted_usec_list_t *sul,
 		 lws_usec_t us);
 
 lws_usec_t
-__lws_sul_check(lws_dll2_owner_t *own, lws_usec_t usnow);
+__lws_sul_service_ripe(lws_dll2_owner_t *own, lws_usec_t usnow);
 
 struct lws_timed_vh_protocol {
 	struct lws_timed_vh_protocol	*next;
@@ -885,7 +885,7 @@ user_callback_handle_rxflow(lws_callback_function, struct lws *wsi,
 			    void *in, size_t len);
 
 LWS_EXTERN int
-lws_plat_set_nonblocking(int fd);
+lws_plat_set_nonblocking(lws_sockfd_type fd);
 
 LWS_EXTERN int
 lws_plat_set_socket_options(struct lws_vhost *vhost, lws_sockfd_type fd,
