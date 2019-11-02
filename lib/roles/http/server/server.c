@@ -700,10 +700,10 @@ lws_http_serve(struct lws *wsi, char *uri, const char *origin,
 			if (!wsi->http2_substream)
 				wsi->sending_chunked = 1;
 
-			wsi->protocol_interpret_idx =
+			wsi->protocol_interpret_idx = (char)(
 				lws_vhost_name_to_protocol(wsi->vhost,
 							   pvo->value) -
-				&lws_get_vhost(wsi)->protocols[0];
+				&lws_get_vhost(wsi)->protocols[0]);
 
 			lwsl_debug("want %s interpreted by %s (pcol is %s)\n", path,
 				    wsi->vhost->protocols[
@@ -1106,7 +1106,12 @@ lws_http_proxy_start(struct lws *wsi, const struct lws_http_mount *hit,
 	lws_clean_url(rpath);
 	na = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
 	if (na) {
-		char *p = rpath + n;
+		char *p;
+
+		if (!n) /* don't start with the ?... use the first / if so */
+			n++;
+
+		p = rpath + n;
 
 		if (na >= (int)sizeof(rpath) - n - 2) {
 			lwsl_info("%s: query string %d longer "
@@ -1865,7 +1870,7 @@ lws_handshake_server(struct lws *wsi, unsigned char **buf, size_t len)
 	while (len) {
 		if (!lwsi_role_server(wsi) || !lwsi_role_http(wsi)) {
 			lwsl_err("%s: bad wsi role 0x%x\n", __func__,
-					lwsi_role(wsi));
+					(int)lwsi_role(wsi));
 			goto bail_nuke_ah;
 		}
 
