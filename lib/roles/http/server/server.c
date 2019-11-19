@@ -2154,10 +2154,13 @@ bail_nuke_ah:
 }
 #endif
 
-LWS_VISIBLE int LWS_WARN_UNUSED_RESULT
+int LWS_WARN_UNUSED_RESULT
 lws_http_transaction_completed(struct lws *wsi)
 {
-	int n = NO_PENDING_TIMEOUT;
+	int n;
+
+	if (wsi->http.cgi_transaction_complete)
+		return 0;
 
 	if (lws_has_buffered_out(wsi)
 #if defined(LWS_WITH_HTTP_STREAM_COMPRESSION)
@@ -2209,7 +2212,11 @@ lws_http_transaction_completed(struct lws *wsi)
 #endif
 	lws_access_log(wsi);
 
-	if (!wsi->hdr_parsing_completed) {
+	if (!wsi->hdr_parsing_completed
+#if defined(LWS_WITH_CGI)
+			&& !wsi->http.cgi
+#endif
+	) {
 		char peer[64];
 
 #if !defined(LWS_PLAT_OPTEE)
@@ -2222,6 +2229,26 @@ lws_http_transaction_completed(struct lws *wsi)
 				__func__, peer);
 		return 0;
 	}
+
+#if defined(LWS_WITH_CGI)
+	if (wsi->http.cgi) {
+		lwsl_debug("%s: cleaning cgi\n", __func__);
+		wsi->http.cgi_transaction_complete = 1;
+		lws_cgi_remove_and_kill(wsi);
+		for (n = 0; n < 3; n++) {
+			if (wsi->http.cgi->pipe_fds[n][!!(n == 0)] == 0)
+				lwsl_err("ZERO FD IN CGI CLOSE");
+
+			if (wsi->http.cgi->pipe_fds[n][!!(n == 0)] >= 0) {
+				close(wsi->http.cgi->pipe_fds[n][!!(n == 0)]);
+				wsi->http.cgi->pipe_fds[n][!!(n == 0)] = LWS_SOCK_INVALID;
+			}
+		}
+
+		lws_free_set_NULL(wsi->http.cgi);
+		wsi->http.cgi_transaction_complete = 0;
+	}
+#endif
 
 	/* if we can't go back to accept new headers, drop the connection */
 	if (wsi->http2_substream)
@@ -2254,7 +2281,13 @@ lws_http_transaction_completed(struct lws *wsi)
 #ifdef LWS_WITH_ACCESS_LOG
 	wsi->http.access_log.sent = 0;
 #endif
+#if defined(LWS_WITH_FILE_OPS) && (defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2))
+	if (lwsi_role_http(wsi) && lwsi_role_server(wsi) &&
+	    wsi->http.fop_fd != NULL)
+		lws_vfs_file_close(&wsi->http.fop_fd);
+#endif
 
+	n = NO_PENDING_TIMEOUT;
 	if (wsi->vhost->keepalive_timeout)
 		n = PENDING_TIMEOUT_HTTP_KEEPALIVE_IDLE;
 	lws_set_timeout(wsi, n, wsi->vhost->keepalive_timeout);
@@ -2370,6 +2403,11 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 			return !wsi->http2_substream;
 		}
 	}
+
+	/*
+	 * Caution... wsi->http.fop_fd is live from here
+	 */
+
 	wsi->http.filelen = lws_vfs_get_length(wsi->http.fop_fd);
 	total_content_length = wsi->http.filelen;
 
@@ -2389,7 +2427,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 		lws_return_http_status(wsi,
 				HTTP_STATUS_REQ_RANGE_NOT_SATISFIABLE, NULL);
 		if (lws_http_transaction_completed(wsi))
-			return -1; /* <0 means just hang up */
+			goto bail; /* <0 means just hang up */
 
 		lws_vfs_file_close(&wsi->http.fop_fd);
 
@@ -2400,7 +2438,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 #endif
 
 	if (lws_add_http_header_status(wsi, n, &p, end))
-		return -1;
+		goto bail;
 
 	if ((wsi->http.fop_fd->flags & (LWS_FOP_FLAG_COMPR_ACCEPTABLE_GZIP |
 		       LWS_FOP_FLAG_COMPR_IS_GZIP)) ==
@@ -2408,7 +2446,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 		if (lws_add_http_header_by_token(wsi,
 			WSI_TOKEN_HTTP_CONTENT_ENCODING,
 			(unsigned char *)"gzip", 4, &p, end))
-			return -1;
+			goto bail;
 		lwsl_info("file is being provided in gzip\n");
 	}
 #if defined(LWS_WITH_HTTP_STREAM_COMPRESSION)
@@ -2437,7 +2475,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 						 (unsigned char *)content_type,
 						 (int)strlen(content_type),
 						 &p, end))
-			return -1;
+			goto bail;
 
 #if defined(LWS_WITH_RANGES)
 	if (ranges >= 2) { /* multipart byteranges */
@@ -2450,7 +2488,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 						 "multipart/byteranges; "
 						 "boundary=_lws",
 			 	 	 	 20, &p, end))
-			return -1;
+			goto bail;
 
 		/*
 		 *  our overall content length has to include
@@ -2496,14 +2534,14 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 						 WSI_TOKEN_HTTP_CONTENT_RANGE,
 						 (unsigned char *)cache_control,
 						 n, &p, end))
-			return -1;
+			goto bail;
 	}
 
 	wsi->http.range.inside = 0;
 
 	if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_ACCEPT_RANGES,
 					 (unsigned char *)"bytes", 5, &p, end))
-		return -1;
+		goto bail;
 #endif
 
 	if (!wsi->http2_substream) {
@@ -2519,7 +2557,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 			 */
 			if (lws_add_http_header_content_length(wsi,
 						total_content_length, &p, end))
-				return -1;
+				goto bail;
 		} else {
 
 #if defined(LWS_WITH_HTTP_STREAM_COMPRESSION)
@@ -2537,7 +2575,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 						WSI_TOKEN_HTTP_TRANSFER_ENCODING,
 						(unsigned char *)"chunked", 7,
 						&p, end))
-					return -1;
+					goto bail;
 
 				/*
 				 * ...this is fun, isn't it :-)  For h1 that is
@@ -2577,24 +2615,24 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 		if (lws_add_http_header_by_token(wsi,
 				WSI_TOKEN_HTTP_CACHE_CONTROL,
 				(unsigned char *)cc, cclen, &p, end))
-			return -1;
+			goto bail;
 	}
 
 	if (other_headers) {
 		if ((end - p) < other_headers_len)
-			return -1;
+			goto bail;
 		memcpy(p, other_headers, other_headers_len);
 		p += other_headers_len;
 	}
 
 	if (lws_finalize_http_header(wsi, &p, end))
-		return -1;
+		goto bail;
 
 	ret = lws_write(wsi, response, p - response, LWS_WRITE_HTTP_HEADERS);
 	if (ret != (p - response)) {
 		lwsl_err("_write returned %d from %ld\n", ret,
 			 (long)(p - response));
-		return -1;
+		goto bail;
 	}
 
 	wsi->http.filepos = 0;
@@ -2602,8 +2640,9 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 
 	if (lws_hdr_total_length(wsi, WSI_TOKEN_HEAD_URI)) {
 		/* we do not emit the body */
+		lws_vfs_file_close(&wsi->http.fop_fd);
 		if (lws_http_transaction_completed(wsi))
-			return -1;
+			goto bail;
 
 		return 0;
 	}
@@ -2611,6 +2650,11 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 	lws_callback_on_writable(wsi);
 
 	return 0;
+
+bail:
+	lws_vfs_file_close(&wsi->http.fop_fd);
+
+	return -1;
 }
 #endif
 
