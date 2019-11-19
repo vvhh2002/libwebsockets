@@ -1402,8 +1402,9 @@ lws_vhost_active_conns(struct lws *wsi, struct lws **nwsi)
 		struct lws *w = lws_container_of(d, struct lws,
 						 dll_cli_active_conns);
 
-		lwsl_debug("%s: check %s %s %d %d\n", __func__, adsin,
-			   w->cli_hostname_copy, wsi->c_port, w->c_port);
+		lwsl_debug("%s: check %s %s %d %d %d %d\n", __func__, adsin,
+			   w->cli_hostname_copy, wsi->c_port, w->c_port,
+			   wsi->tls.use_ssl, w->tls.use_ssl);
 
 		if (w != wsi && w->cli_hostname_copy &&
 		    !strcmp(adsin, w->cli_hostname_copy) &&

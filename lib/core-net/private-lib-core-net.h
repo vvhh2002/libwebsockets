@@ -747,6 +747,7 @@ struct lws {
 	unsigned int transaction_from_pipeline_queue:1;
 	unsigned int keepalive_active:1;
 	unsigned int keepalive_rejected:1;
+	unsigned int redirected_to_get:1;
 	unsigned int client_pipeline:1;
 	unsigned int client_h2_alpn:1;
 	unsigned int client_h2_substream:1;
@@ -757,7 +758,7 @@ struct lws {
 	unsigned int sock_send_blocking:1;
 #endif
 
-	uint16_t c_port;
+	uint16_t ocport, c_port;
 	uint16_t retry;
 
 	/* chars */
