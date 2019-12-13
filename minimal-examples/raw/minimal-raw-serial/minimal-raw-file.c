@@ -6,8 +6,7 @@
  * This file is made available under the Creative Commons CC0 1.0
  * Universal Public Domain Dedication.
  *
- * This demonstrates adopting a file descriptor into the lws event
- * loop.
+ * This demonstrates dealing with a serial port
  */
 
 #include <libwebsockets.h>
@@ -17,12 +16,32 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include <termios.h>
+#include <sys/ioctl.h>
+
+#if defined(__linux__)
+#include <asm/ioctls.h>
+#include <linux/serial.h>
+#endif
+
 struct raw_vhd {
-//	lws_sock_file_fd_type u;
+	lws_sorted_usec_list_t sul;
+	struct lws *wsi;
 	int filefd;
 };
 
 static char filepath[256];
+
+static void
+sul_cb(lws_sorted_usec_list_t *sul)
+{
+	struct raw_vhd *v = lws_container_of(sul, struct raw_vhd, sul);
+
+	lws_callback_on_writable(v->wsi);
+
+	lws_sul_schedule(lws_get_context(v->wsi), 0, &v->sul, sul_cb,
+			 2 * LWS_USEC_PER_SEC);
+}
 
 static int
 callback_raw_test(struct lws *wsi, enum lws_callback_reasons reason,
@@ -30,7 +49,11 @@ callback_raw_test(struct lws *wsi, enum lws_callback_reasons reason,
 {
 	struct raw_vhd *vhd = (struct raw_vhd *)lws_protocol_vh_priv_get(
 				     lws_get_vhost(wsi), lws_get_protocol(wsi));
+#if defined(__linux__)
+	struct serial_struct s_s;
+#endif
 	lws_sock_file_fd_type u;
+	struct termios tio;
 	uint8_t buf[1024];
 	int n;
 
@@ -44,6 +67,53 @@ callback_raw_test(struct lws *wsi, enum lws_callback_reasons reason,
 
 			return 1;
 		}
+
+		tcflush(vhd->filefd, TCIOFLUSH);
+
+#if defined(__linux__)
+		if (ioctl(vhd->filefd, TIOCGSERIAL, &s_s) == 0) {
+			s_s.closing_wait = ASYNC_CLOSING_WAIT_NONE;
+			ioctl(vhd->filefd, TIOCSSERIAL, &s_s);
+		}
+#endif
+
+		/* enforce suitable tty state */
+
+		memset(&tio, 0, sizeof tio);
+		if (tcgetattr(vhd->filefd, &tio)) {
+			close(vhd->filefd);
+			vhd->filefd = -1;
+			return -1;
+		}
+
+		cfsetispeed(&tio, B115200);
+		cfsetospeed(&tio, B115200);
+
+		tio.c_lflag &= ~(ISIG | ICANON | IEXTEN | ECHO |
+#if defined(__linux__)
+				XCASE |
+#endif
+				 ECHOE | ECHOK | ECHONL | ECHOCTL | ECHOKE);
+		tio.c_iflag &= ~(INLCR | IGNBRK | IGNPAR | IGNCR | ICRNL |
+				 IMAXBEL | IXON | IXOFF | IXANY
+#if defined(__linux__)
+				 | IUCLC
+#endif
+				| 0xff);
+		tio.c_oflag = 0;
+
+		tio.c_cc[VMIN]  = 1;
+		tio.c_cc[VTIME] = 0;
+		tio.c_cc[VEOF] = 1;
+		tio.c_cflag &=  ~(
+#if defined(__linux__)
+				CBAUD |
+#endif
+				CSIZE | CSTOPB | PARENB | CRTSCTS);
+		tio.c_cflag |= 0x1412 | CS8 | CREAD | CLOCAL;
+
+		tcsetattr(vhd->filefd, TCSANOW, &tio);
+
 		u.filefd = (lws_filefd_type)(long long)vhd->filefd;
 		if (!lws_adopt_descriptor_vhost(lws_get_vhost(wsi),
 						LWS_ADOPT_RAW_FILE_DESC, u,
@@ -54,6 +124,7 @@ callback_raw_test(struct lws *wsi, enum lws_callback_reasons reason,
 
 			return 1;
 		}
+
 		break;
 
 	case LWS_CALLBACK_PROTOCOL_DESTROY:
@@ -65,6 +136,8 @@ callback_raw_test(struct lws *wsi, enum lws_callback_reasons reason,
 
 	case LWS_CALLBACK_RAW_ADOPT_FILE:
 		lwsl_notice("LWS_CALLBACK_RAW_ADOPT_FILE\n");
+		vhd->wsi = wsi;
+		lws_sul_schedule(lws_get_context(wsi), 0, &vhd->sul, sul_cb, 1);
 		break;
 
 	case LWS_CALLBACK_RAW_RX_FILE:
@@ -80,14 +153,13 @@ callback_raw_test(struct lws *wsi, enum lws_callback_reasons reason,
 
 	case LWS_CALLBACK_RAW_CLOSE_FILE:
 		lwsl_notice("LWS_CALLBACK_RAW_CLOSE_FILE\n");
+		lws_sul_schedule(lws_get_context(wsi), 0, &vhd->sul, sul_cb, LWS_SET_TIMER_USEC_CANCEL);
 		break;
 
 	case LWS_CALLBACK_RAW_WRITEABLE_FILE:
 		lwsl_notice("LWS_CALLBACK_RAW_WRITEABLE_FILE\n");
-		/*
-		 * you can call lws_callback_on_writable() on a raw file wsi as
-		 * usual, and then write directly into the raw filefd here.
-		 */
+		if (lws_write(wsi, (uint8_t *)"hello-this-is-written-every-couple-of-seconds\r\n", 47, LWS_WRITE_RAW) != 47)
+			return -1;
 		break;
 
 	default:
@@ -128,11 +200,10 @@ int main(int argc, const char **argv)
 		logs = atoi(p);
 
 	lws_set_log_level(logs, NULL);
-	lwsl_user("LWS minimal raw file\n");
+	lwsl_user("LWS minimal raw serial\n");
 	if (argc < 2) {
-		lwsl_user("Usage: %s <file to monitor>  "
-			  " eg, /dev/ttyUSB0 or /dev/input/event0 or "
-			  "/proc/self/fd/0\n", argv[0]);
+		lwsl_user("Usage: %s <serial device>  "
+			  " eg, /dev/ttyUSB0\n", argv[0]);
 
 		return 1;
 	}

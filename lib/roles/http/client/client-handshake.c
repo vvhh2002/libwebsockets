@@ -582,13 +582,15 @@ ads_known:
 
 	m = connect(wsi->desc.sockfd, (const struct sockaddr *)psa, n);
 	if (m == -1) {
-		lwsl_debug("%s: connect says errno: %d\n", __func__, LWS_ERRNO);
+		int errno_copy = LWS_ERRNO;
 
-		if (LWS_ERRNO != LWS_EALREADY &&
-		    LWS_ERRNO != LWS_EINPROGRESS &&
-		    LWS_ERRNO != LWS_EWOULDBLOCK
+		lwsl_debug("%s: connect says errno: %d\n", __func__, errno_copy);
+
+		if (errno_copy != LWS_EALREADY &&
+		    errno_copy != LWS_EINPROGRESS &&
+		    errno_copy != LWS_EWOULDBLOCK
 #ifdef _WIN32
-			&& LWS_ERRNO != WSAEINVAL
+			&& errno_copy != WSAEINVAL
 #endif
 		) {
 #if defined(_DEBUG)
@@ -681,6 +683,7 @@ try_next_result:
 		if (wsi->dns_results_next)
 			goto next_result;
 	}
+	lws_addrinfo_clean(wsi);
 	cce = "Unable to connect";
 
 //failed:
@@ -870,7 +873,10 @@ solo:
 	wsi->detlat.earliest_write_req_pre_write = lws_now_usecs();
 #endif
 #if !defined(LWS_WITH_SYS_ASYNC_DNS)
-	n = lws_getaddrinfo46(wsi, ads, &result);
+	if (wsi->dns_results)
+		n = 0;
+	else
+		n = lws_getaddrinfo46(wsi, ads, &result);
 #else
 	lwsi_set_state(wsi, LRS_WAITING_DNS);
 	/* this is either FAILED, CONTINUING, or already called connect_4 */
@@ -1368,7 +1374,7 @@ socks_generate_msg(struct lws *wsi, enum socks_msg_type type, ssize_t *msg_len)
 		break;
 
 	case SOCKS_MSG_CONNECT:
-		n = strlen(wsi->stash->address);
+		n = strlen(wsi->stash->cis[CIS_ADDRESS]);
 
 		if (n > 254 || lws_ptr_diff(end, p) < 5 + n + 2)
 			return 1;
@@ -1387,7 +1393,7 @@ socks_generate_msg(struct lws *wsi, enum socks_msg_type type, ssize_t *msg_len)
 		*p++ = n;
 
 		/* the address we tell SOCKS proxy to connect to */
-		memcpy(p, wsi->stash->address, n);
+		memcpy(p, wsi->stash->cis[CIS_ADDRESS], n);
 		p += n;
 
 		net_num = htons(wsi->c_port);

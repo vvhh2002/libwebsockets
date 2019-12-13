@@ -280,6 +280,15 @@ enum lws_callback_reasons {
 	 *          break;
 	 */
 
+	LWS_CALLBACK_VERIFY_BASIC_AUTHORIZATION = 102,
+	/**< This gives the user code a chance to accept or reject credentials
+	 * provided HTTP to basic authorization. It will only be called if the
+	 * http mount's authentication_mode is set to LWSAUTHM_BASIC_AUTH_CALLBACK
+	 * `in` points to a credential string of the form `username:password` If
+	 * the callback returns zero (the default if unhandled), then the
+	 * transaction ends with HTTP_STATUS_UNAUTHORIZED, otherwise the request
+	 * will be processed */
+
 	LWS_CALLBACK_CHECK_ACCESS_RIGHTS			= 51,
 	/**< This gives the user code a chance to forbid an http access.
 	 * `in` points to a `struct lws_process_html_args`, which
@@ -346,19 +355,23 @@ enum lws_callback_reasons {
 	 * one callback. */
 
 	LWS_CALLBACK_RECEIVE_CLIENT_HTTP			= 46,
-	/**< This simply indicates data was received on the HTTP client
-	 * connection.  It does NOT drain or provide the data.
-	 * This exists to neatly allow a proxying type situation,
-	 * where this incoming data will go out on another connection.
-	 * If the outgoing connection stalls, we should stall processing
-	 * the incoming data.  So a handler for this in that case should
-	 * simply set a flag to indicate there is incoming data ready
-	 * and ask for a writeable callback on the outgoing connection.
-	 * In the writable callback he can check the flag and then get
-	 * and drain the waiting incoming data using lws_http_client_read().
-	 * This will use callbacks to LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ
-	 * to get and drain the incoming data, where it should be sent
-	 * back out on the outgoing connection. */
+	/**< This indicates data was received on the HTTP client connection.  It
+	 * does NOT actually drain or provide the data, so if you are doing
+	 * http client, you MUST handle this and call lws_http_client_read().
+	 * Failure to deal with it as in the minimal examples may cause spinning
+	 * around the event loop as it's continuously signalled the same data
+	 * is available for read.  The related minimal examples show how to
+	 * handle it.
+	 *
+	 * It's possible to defer calling lws_http_client_read() if you use
+	 * rx flow control to stop further rx handling on the connection until
+	 * you did deal with it.  But normally you would call it in the handler.
+	 *
+	 * lws_http_client_read() strips any chunked framing and calls back
+	 * with only payload data to LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ.  The
+	 * chunking is the reason this is not just all done in one callback for
+	 * http.
+	 */
 	LWS_CALLBACK_COMPLETED_CLIENT_HTTP			= 47,
 	/**< The client transaction completed... at the moment this
 	 * is the same as closing since transaction pipelining on
