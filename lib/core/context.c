@@ -243,6 +243,10 @@ lws_create_context(const struct lws_context_creation_info *info)
 	context->detailed_latency_filepath = info->detailed_latency_filepath;
 	context->latencies_fd = -1;
 #endif
+#if defined(LWS_WITHOUT_EXTENSIONS)
+        if (info->extensions)
+                lwsl_warn("%s: LWS_WITHOUT_EXTENSIONS but extensions ptr set\n", __func__);
+#endif
 #endif
 
 	/* if he gave us names, set the uid / gid */
@@ -470,6 +474,14 @@ lws_create_context(const struct lws_context_creation_info *info)
 	context->default_retry.jitter_percent = 20;
 	context->default_retry.secs_since_valid_ping = 300;
 	context->default_retry.secs_since_valid_hangup = 310;
+
+	if (info->retry_and_idle_policy &&
+	    info->retry_and_idle_policy->secs_since_valid_ping) {
+		context->default_retry.secs_since_valid_ping =
+				info->retry_and_idle_policy->secs_since_valid_ping;
+		context->default_retry.secs_since_valid_hangup =
+				info->retry_and_idle_policy->secs_since_valid_hangup;
+	}
 
 	/*
 	 * Allocate the per-thread storage for scratchpad buffers,
