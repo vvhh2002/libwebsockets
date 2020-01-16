@@ -22,9 +22,10 @@
  * IN THE SOFTWARE.
  */
 
+#include <libwebsockets.h>
 #include "private-lib-core.h"
 
-LWS_VISIBLE struct lws *
+struct lws *
 lws_client_connect_via_info(const struct lws_client_connect_info *i)
 {
 	const char *local = i->protocol;
@@ -49,6 +50,10 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	if (i->local_protocol_name)
 		local = i->local_protocol_name;
 
+	if ((i->ssl_connection & LCCSCF_USE_SSL) &&
+	    lws_tls_restrict_borrow(i->context))
+		return NULL;
+
 	lws_stats_bump(&i->context->pt[tid], LWSSTATS_C_CONNS_CLIENT, 1);
 
 	/* PHASE 1: create a bare wsi */
@@ -56,6 +61,8 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	wsi = lws_zalloc(sizeof(struct lws), "client wsi");
 	if (wsi == NULL)
 		goto bail;
+
+
 
 	wsi->context = i->context;
 	wsi->desc.sockfd = LWS_SOCK_INVALID;
@@ -145,6 +152,10 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	wsi->ocport = wsi->c_port = i->port;
 	wsi->sys_tls_client_cert = i->sys_tls_client_cert;
 
+#if defined(LWS_ROLE_H2)
+	wsi->txc.manual_initial_tx_credit = (int32_t)i->manual_initial_tx_credit;
+#endif
+
 	wsi->protocol = &wsi->vhost->protocols[0];
 	wsi->client_pipeline = !!(i->ssl_connection & LCCSCF_PIPELINE);
 
@@ -153,7 +164,7 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	 * role finalization
 	 */
 
-	if (!wsi->user_space && i->userdata) {
+	if (i->userdata) {
 		wsi->user_space_externally_allocated = 1;
 		wsi->user_space = i->userdata;
 	}
@@ -235,7 +246,7 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 	for (n = 0; n < CIS_COUNT; n++)
 		if (cisin[n]) {
 			wsi->stash->cis[n] = pc;
-			m = strlen(cisin[n]) + 1;
+			m = (int)strlen(cisin[n]) + 1;
 			memcpy(pc, cisin[n], m);
 			pc += m;
 		}
@@ -304,10 +315,49 @@ lws_client_connect_via_info(const struct lws_client_connect_info *i)
 					     i->uri_replace_to);
 #endif
 
-	if (i->method && !strcmp(i->method, "RAW"))
+	if (i->method && (!strcmp(i->method, "RAW"))) {
+
+#if defined(LWS_WITH_TLS)
+
+		wsi->tls.ssl = NULL;
+
+		if (wsi->tls.use_ssl & LCCSCF_USE_SSL) {
+
+			/* we can retry this... just cook the SSL BIO the first time */
+
+			if (lws_ssl_client_bio_create(wsi) < 0) {
+				lwsl_err("%s: bio_create failed\n", __func__);
+				goto bail3;
+			}
+
+#if !defined(LWS_WITH_SYS_ASYNC_DNS)
+			if (wsi->tls.use_ssl & LCCSCF_USE_SSL) {
+				n = lws_ssl_client_connect1(wsi);
+				if (!n)
+					return wsi;
+				if (n < 0) {
+					lwsl_err("%s: lws_ssl_client_connect1 failed\n", __func__);
+					goto bail3;
+				}
+			}
+#endif
+		}
+
+
+		/* fallthru */
+#endif
+
 		lws_http_client_connect_via_info2(wsi);
+	}
 
 	return wsi;
+
+#if defined(LWS_WITH_TLS)
+bail3:
+	lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS, "tls start fail");
+
+	return NULL;
+#endif
 
 bail1:
 	lws_free_set_NULL(wsi->stash);
@@ -317,6 +367,10 @@ bail:
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
 bail2:
 #endif
+
+	if (i->ssl_connection & LCCSCF_USE_SSL)
+		lws_tls_restrict_return(i->context);
+
 	if (i->pwsi)
 		*i->pwsi = NULL;
 

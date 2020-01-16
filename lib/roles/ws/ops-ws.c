@@ -513,7 +513,7 @@ spill:
 
 		case LWSWSOPC_PING:
 			lwsl_info("received %d byte ping, sending pong\n",
-						 wsi->ws->rx_ubuf_head);
+						 (int)wsi->ws->rx_ubuf_head);
 
 			if (wsi->ws->ping_pending_flag) {
 				/*
@@ -749,13 +749,13 @@ illegal_ctl_length:
 }
 
 
-LWS_VISIBLE size_t
+size_t
 lws_remaining_packet_payload(struct lws *wsi)
 {
 	return wsi->ws->rx_packet_length;
 }
 
-LWS_VISIBLE int lws_frame_is_binary(struct lws *wsi)
+int lws_frame_is_binary(struct lws *wsi)
 {
 	return wsi->ws->frame_is_binary;
 }
@@ -807,13 +807,13 @@ lws_remove_wsi_from_draining_ext_list(struct lws *wsi)
 static int
 lws_0405_frame_mask_generate(struct lws *wsi)
 {
-	int n;
+	size_t n;
 	/* fetch the per-frame nonce */
 
 	n = lws_get_random(lws_get_context(wsi), wsi->ws->mask, 4);
 	if (n != 4) {
 		lwsl_parser("Unable to read from random device %s %d\n",
-			    SYSTEM_RANDOM_FILEPATH, n);
+			    SYSTEM_RANDOM_FILEPATH, (int)n);
 		return 1;
 	}
 
@@ -878,7 +878,7 @@ lws_server_init_wsi_for_ws(struct lws *wsi)
 
 
 
-LWS_VISIBLE int
+int
 lws_is_final_fragment(struct lws *wsi)
 {
 #if !defined(LWS_WITHOUT_EXTENSIONS)
@@ -892,31 +892,31 @@ lws_is_final_fragment(struct lws *wsi)
 #endif
 }
 
-LWS_VISIBLE int
+int
 lws_is_first_fragment(struct lws *wsi)
 {
 	return wsi->ws->first_fragment;
 }
 
-LWS_VISIBLE unsigned char
+unsigned char
 lws_get_reserved_bits(struct lws *wsi)
 {
 	return wsi->ws->rsv;
 }
 
-LWS_VISIBLE LWS_EXTERN int
+int
 lws_get_close_length(struct lws *wsi)
 {
 	return wsi->ws->close_in_ping_buffer_len;
 }
 
-LWS_VISIBLE LWS_EXTERN unsigned char *
+unsigned char *
 lws_get_close_payload(struct lws *wsi)
 {
 	return &wsi->ws->ping_payload_buf[LWS_PRE];
 }
 
-LWS_VISIBLE LWS_EXTERN void
+void
 lws_close_reason(struct lws *wsi, enum lws_close_status status,
 		 unsigned char *buf, size_t len)
 {
@@ -1052,7 +1052,7 @@ rops_handle_POLLIN_ws(struct lws_context_per_thread *pt, struct lws *wsi,
 		return LWS_HPI_RET_HANDLED;
 
 #if defined(LWS_WITH_HTTP2)
-	if (wsi->http2_substream || wsi->upgraded_to_http2) {
+	if (wsi->mux_substream || wsi->upgraded_to_http2) {
 		wsi1 = lws_get_network_wsi(wsi);
 		if (wsi1 && lws_has_buffered_out(wsi1))
 			/* We cannot deal with any kind of new RX
@@ -1196,7 +1196,6 @@ drain:
 
 			if (n < 0) {
 				/* we closed wsi */
-				n = 0;
 				return LWS_HPI_RET_WSI_ALREADY_DIED;
 			}
 			//lws_buflist_describe(&wsi->buflist, wsi, __func__);
@@ -1329,7 +1328,7 @@ int rops_handle_POLLOUT_ws(struct lws *wsi)
 
 		lwsl_info("%s: issuing ping on wsi %p: %s %s h2: %d\n", __func__, wsi,
 				wsi->role_ops->name, wsi->protocol->name,
-				wsi->http2_substream);
+				wsi->mux_substream);
 		wsi->ws->send_check_ping = 0;
 		n = lws_write(wsi, &wsi->ws->ping_payload_buf[LWS_PRE],
 			      0, LWS_WRITE_PING);
@@ -1914,7 +1913,7 @@ rops_close_kill_connection_ws(struct lws *wsi, enum lws_close_status reason)
 {
 	/* deal with ws encapsulation in h2 */
 #if defined(LWS_WITH_HTTP2)
-	if (wsi->http2_substream && wsi->h2_stream_carries_ws)
+	if (wsi->mux_substream && wsi->h2_stream_carries_ws)
 		return role_ops_h2.close_kill_connection(wsi, reason);
 
 	return 0;
@@ -1945,7 +1944,7 @@ rops_init_vhost_ws(struct lws_vhost *vh,
 {
 #if !defined(LWS_WITHOUT_EXTENSIONS)
 #ifdef LWS_WITH_PLUGINS
-	struct lws_plugin *plugin = vh->context->plugin_list;
+	struct lws_plugin *plugin;
 	int m;
 
 	if (vh->context->plugin_extension_count) {
@@ -2046,7 +2045,7 @@ rops_issue_keepalive_ws(struct lws *wsi, int isvalid)
 	return 0;
 }
 
-struct lws_role_ops role_ops_ws = {
+const struct lws_role_ops role_ops_ws = {
 	/* role name */			"ws",
 	/* alpn id */			NULL,
 	/* check_upgrades */		NULL,

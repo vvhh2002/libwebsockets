@@ -137,7 +137,8 @@ done_list:
 				 vhost->name, vhost->iface, vhost->listen_port);
 			else
 				return -1;
-			return (info->options & LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND) == LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND?
+			return (info->options & LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND) ==
+					LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND?
 				-1 : 1;
 		case LWS_ITOSA_NOT_USABLE:
 			/* can't add it */
@@ -146,7 +147,8 @@ done_list:
 				 vhost->name, vhost->iface, vhost->listen_port);
 			else
 				return -1;
-			return (info->options & LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND) == LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND?
+			return (info->options & LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND) ==
+					LWS_SERVER_OPTION_FAIL_UPON_UNABLE_TO_BIND?
 				-1 : 1;
 		}
 	}
@@ -245,7 +247,8 @@ done_list:
 #endif
 		lws_plat_set_socket_options(vhost, sockfd, 0);
 
-		is = lws_socket_bind(vhost, sockfd, vhost->listen_port, vhost->iface, 1);
+		is = lws_socket_bind(vhost, sockfd, vhost->listen_port,
+				     vhost->iface, 1);
 		if (is == LWS_ITOSA_BUSY) {
 			/* treat as fatal */
 			compatible_close(sockfd);
@@ -309,7 +312,8 @@ done_list:
 		}
 	} /* for each thread able to independently listen */
 
-	if (!lws_check_opt(vhost->context->options, LWS_SERVER_OPTION_EXPLICIT_VHOSTS)) {
+	if (!lws_check_opt(vhost->context->options,
+			   LWS_SERVER_OPTION_EXPLICIT_VHOSTS)) {
 #ifdef LWS_WITH_UNIX_SOCK
 		if (LWS_UNIX_SOCK_ENABLED(vhost))
 			lwsl_info(" Listening on \"%s\"\n", vhost->iface);
@@ -415,7 +419,7 @@ static const struct lws_mimetype {
 	{ ".json", "application/json" },
 };
 
-LWS_VISIBLE LWS_EXTERN const char *
+const char *
 lws_get_mimetype(const char *file, const struct lws_http_mount *m)
 {
 	const struct lws_protocol_vhost_options *pvo;
@@ -433,7 +437,8 @@ lws_get_mimetype(const char *file, const struct lws_http_mount *m)
 
 		len = strlen(pvo->name);
 		if (n > len && !strcasecmp(&file[n - len], pvo->name)) {
-			lwsl_info("%s: match to user mimetype: %s\n", __func__, pvo->value);
+			lwsl_info("%s: match to user mimetype: %s\n", __func__,
+				  pvo->value);
 			return pvo->value;
 		}
 	}
@@ -444,14 +449,16 @@ lws_get_mimetype(const char *file, const struct lws_http_mount *m)
 
 		len = strlen(mt->extension);
 		if (n > len && !strcasecmp(&file[n - len], mt->extension)) {
-			lwsl_info("%s: match to server mimetype: %s\n", __func__, mt->mimetype);
+			lwsl_info("%s: match to server mimetype: %s\n", __func__,
+				  mt->mimetype);
 			return mt->mimetype;
 		}
 	}
 
 	/* fallback to '*' if defined */
 	if (fallback_mimetype) {
-		lwsl_info("%s: match to any mimetype: %s\n", __func__, fallback_mimetype);
+		lwsl_info("%s: match to any mimetype: %s\n", __func__,
+			  fallback_mimetype);
 		return fallback_mimetype;
 	}
 
@@ -697,7 +704,7 @@ lws_http_serve(struct lws *wsi, char *uri, const char *origin,
 		if (n > (int)strlen(pvo->name) &&
 		    !strcmp(&path[n - strlen(pvo->name)], pvo->name)) {
 			wsi->interpreting = 1;
-			if (!wsi->http2_substream)
+			if (!wsi->mux_substream)
 				wsi->sending_chunked = 1;
 
 			wsi->protocol_interpret_idx = (char)(
@@ -777,7 +784,7 @@ lws_find_mount(struct lws *wsi, const char *uri_ptr, int uri_len)
 			     lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI) ||
 			     lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI) ||
 			     lws_hdr_total_length(wsi, WSI_TOKEN_HEAD_URI) ||
-			     (wsi->http2_substream &&
+			     (wsi->mux_substream &&
 				lws_hdr_total_length(wsi,
 						WSI_TOKEN_HTTP_COLON_PATH)) ||
 			     hm->protocol) &&
@@ -930,7 +937,7 @@ lws_http_get_uri_and_method(struct lws *wsi, char **puri_ptr, int *puri_len)
 	}
 
 	if (count != 1 &&
-	    !((wsi->http2_substream || wsi->h2_stream_carries_ws) &&
+	    !((wsi->mux_substream || wsi->h2_stream_carries_ws) &&
 	      lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_COLON_PATH))) {
 		lwsl_warn("multiple methods?\n");
 		return -1;
@@ -1177,7 +1184,8 @@ lws_http_proxy_start(struct lws *wsi, const struct lws_http_mount *hit,
 #if defined(LWS_WITH_HTTP2)
 								|| (
 			lws_hdr_simple_ptr(wsi, WSI_TOKEN_HTTP_COLON_METHOD) &&
-			!strcmp(lws_hdr_simple_ptr(wsi, WSI_TOKEN_HTTP_COLON_METHOD), "post")
+			!strcmp(lws_hdr_simple_ptr(wsi,
+					WSI_TOKEN_HTTP_COLON_METHOD), "post")
 			)
 #endif
 		)
@@ -1234,7 +1242,8 @@ lws_http_proxy_start(struct lws *wsi, const struct lws_http_mount *hit,
 		wsi->proxied_ws_parent = 1;
 		cwsi->h1_ws_proxied = 1;
 		if (i.protocol) {
-			lwsl_debug("%s: (requesting '%s')\n", __func__, i.protocol);
+			lwsl_debug("%s: (requesting '%s')\n",
+					__func__, i.protocol);
 		}
 	}
 
@@ -1242,14 +1251,99 @@ lws_http_proxy_start(struct lws *wsi, const struct lws_http_mount *hit,
 }
 #endif
 
+
 static const char * const oprot[] = {
 	"http://", "https://"
 };
+
+
+static int
+lws_http_redirect_hit(struct lws_context_per_thread *pt, struct lws *wsi,
+		      const struct lws_http_mount *hit, char *uri_ptr,
+		      int uri_len, int *h)
+{
+	char *s;
+	int n;
+
+	*h = 0;
+	s = uri_ptr + hit->mountpoint_len;
+
+	/*
+	 * if we have a mountpoint like https://xxx.com/yyy
+	 * there is an implied / at the end for our purposes since
+	 * we can only mount on a "directory".
+	 *
+	 * But if we just go with that, the browser cannot understand
+	 * that he is actually looking down one "directory level", so
+	 * even though we give him /yyy/abc.html he acts like the
+	 * current directory level is /.  So relative urls like "x.png"
+	 * wrongly look outside the mountpoint.
+	 *
+	 * Therefore if we didn't come in on a url with an explicit
+	 * / at the end, we must redirect to add it so the browser
+	 * understands he is one "directory level" down.
+	 */
+	if ((hit->mountpoint_len > 1 ||
+	     (hit->origin_protocol == LWSMPRO_REDIR_HTTP ||
+	      hit->origin_protocol == LWSMPRO_REDIR_HTTPS)) &&
+	    (*s != '/' ||
+	     (hit->origin_protocol == LWSMPRO_REDIR_HTTP ||
+	      hit->origin_protocol == LWSMPRO_REDIR_HTTPS)) &&
+	    (hit->origin_protocol != LWSMPRO_CGI &&
+	     hit->origin_protocol != LWSMPRO_CALLBACK)) {
+		unsigned char *start = pt->serv_buf + LWS_PRE, *p = start,
+			      *end = p + wsi->context->pt_serv_buf_size -
+					LWS_PRE - 512;
+
+		*h = 1;
+
+		lwsl_info("Doing 301 '%s' org %s\n", s, hit->origin);
+
+		/* > at start indicates deal with by redirect */
+		if (hit->origin_protocol == LWSMPRO_REDIR_HTTP ||
+		    hit->origin_protocol == LWSMPRO_REDIR_HTTPS)
+			n = lws_snprintf((char *)end, 256, "%s%s",
+				    oprot[hit->origin_protocol & 1],
+				    hit->origin);
+		else {
+			if (!lws_hdr_total_length(wsi, WSI_TOKEN_HOST)) {
+				if (!lws_hdr_total_length(wsi,
+						WSI_TOKEN_HTTP_COLON_AUTHORITY))
+					goto bail_nuke_ah;
+				n = lws_snprintf((char *)end, 256,
+				    "%s%s%s/", oprot[!!lws_is_ssl(wsi)],
+				    lws_hdr_simple_ptr(wsi,
+						WSI_TOKEN_HTTP_COLON_AUTHORITY),
+				    uri_ptr);
+			} else
+				n = lws_snprintf((char *)end, 256,
+				    "%s%s%s/", oprot[!!lws_is_ssl(wsi)],
+				    lws_hdr_simple_ptr(wsi, WSI_TOKEN_HOST),
+				    uri_ptr);
+		}
+
+		lws_clean_url((char *)end);
+		n = lws_http_redirect(wsi, HTTP_STATUS_MOVED_PERMANENTLY,
+				      end, n, &p, end);
+		if ((int)n < 0)
+			goto bail_nuke_ah;
+
+		return lws_http_transaction_completed(wsi);
+	}
+
+	return 0;
+
+bail_nuke_ah:
+	lws_header_table_detach(wsi, 1);
+
+	return 1;
+}
 
 int
 lws_http_action(struct lws *wsi)
 {
 	struct lws_context_per_thread *pt = &wsi->context->pt[(int)wsi->tsi];
+	int uri_len = 0, meth, m, http_version_len, ha;
 	const struct lws_http_mount *hit = NULL;
 	enum http_version request_version;
 	struct lws_process_html_args args;
@@ -1257,9 +1351,7 @@ lws_http_action(struct lws *wsi)
 	char content_length_str[32];
 	char http_version_str[12];
 	char *uri_ptr = NULL, *s;
-	int uri_len = 0, meth, m;
 	char http_conn_str[25];
-	int http_version_len;
 	unsigned int n;
 
 	meth = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
@@ -1311,7 +1403,7 @@ lws_http_action(struct lws *wsi)
 		}
 	}
 
-	if (wsi->http2_substream) {
+	if (wsi->mux_substream) {
 		wsi->http.request_version = HTTP_VERSION_2;
 	} else {
 		/* http_version? Default to 1.0, override with token: */
@@ -1359,7 +1451,7 @@ lws_http_action(struct lws *wsi)
 	 * if there is content supposed to be coming,
 	 * put a timeout on it having arrived
 	 */
-	if (!wsi->h2_stream_immortal)
+	if (!wsi->mux_stream_immortal)
 		lws_set_timeout(wsi, PENDING_TIMEOUT_HTTP_CONTENT,
 				wsi->context->timeout_secs);
 #ifdef LWS_WITH_TLS
@@ -1418,67 +1510,9 @@ lws_http_action(struct lws *wsi)
 	}
 
 	s = uri_ptr + hit->mountpoint_len;
-
-	/*
-	 * if we have a mountpoint like https://xxx.com/yyy
-	 * there is an implied / at the end for our purposes since
-	 * we can only mount on a "directory".
-	 *
-	 * But if we just go with that, the browser cannot understand
-	 * that he is actually looking down one "directory level", so
-	 * even though we give him /yyy/abc.html he acts like the
-	 * current directory level is /.  So relative urls like "x.png"
-	 * wrongly look outside the mountpoint.
-	 *
-	 * Therefore if we didn't come in on a url with an explicit
-	 * / at the end, we must redirect to add it so the browser
-	 * understands he is one "directory level" down.
-	 */
-	if ((hit->mountpoint_len > 1 ||
-	     (hit->origin_protocol == LWSMPRO_REDIR_HTTP ||
-	      hit->origin_protocol == LWSMPRO_REDIR_HTTPS)) &&
-	    (*s != '/' ||
-	     (hit->origin_protocol == LWSMPRO_REDIR_HTTP ||
-	      hit->origin_protocol == LWSMPRO_REDIR_HTTPS)) &&
-	    (hit->origin_protocol != LWSMPRO_CGI &&
-	     hit->origin_protocol != LWSMPRO_CALLBACK)) {
-		unsigned char *start = pt->serv_buf + LWS_PRE, *p = start,
-			      *end = p + wsi->context->pt_serv_buf_size -
-			      	     LWS_PRE - 512;
-
-		lwsl_info("Doing 301 '%s' org %s\n", s, hit->origin);
-
-		/* > at start indicates deal with by redirect */
-		if (hit->origin_protocol == LWSMPRO_REDIR_HTTP ||
-		    hit->origin_protocol == LWSMPRO_REDIR_HTTPS)
-			n = lws_snprintf((char *)end, 256, "%s%s",
-				    oprot[hit->origin_protocol & 1],
-				    hit->origin);
-		else {
-			if (!lws_hdr_total_length(wsi, WSI_TOKEN_HOST)) {
-				if (!lws_hdr_total_length(wsi,
-						WSI_TOKEN_HTTP_COLON_AUTHORITY))
-					goto bail_nuke_ah;
-				n = lws_snprintf((char *)end, 256,
-				    "%s%s%s/", oprot[!!lws_is_ssl(wsi)],
-				    lws_hdr_simple_ptr(wsi,
-						WSI_TOKEN_HTTP_COLON_AUTHORITY),
-				    uri_ptr);
-			} else
-				n = lws_snprintf((char *)end, 256,
-				    "%s%s%s/", oprot[!!lws_is_ssl(wsi)],
-				    lws_hdr_simple_ptr(wsi, WSI_TOKEN_HOST),
-				    uri_ptr);
-		}
-
-		lws_clean_url((char *)end);
-		n = lws_http_redirect(wsi, HTTP_STATUS_MOVED_PERMANENTLY,
-				      end, n, &p, end);
-		if ((int)n < 0)
-			goto bail_nuke_ah;
-
-		return lws_http_transaction_completed(wsi);
-	}
+	n = lws_http_redirect_hit(pt, wsi, hit, uri_ptr, uri_len, &ha);
+	if (ha)
+		return n;
 
 	/* basic auth? */
 
@@ -1528,7 +1562,6 @@ lws_http_action(struct lws *wsi)
 
 		pp = lws_vhost_name_to_protocol(wsi->vhost, name);
 		if (!pp) {
-			n = -1;
 			lwsl_err("Unable to find plugin '%s'\n",
 				 hit->origin);
 			return 1;
@@ -1597,7 +1630,7 @@ lws_http_action(struct lws *wsi)
 	}
 #endif
 
-	n = uri_len - lws_ptr_diff(s, uri_ptr); // (int)strlen(s);
+	n = uri_len - lws_ptr_diff(s, uri_ptr);
 	if (s[0] == '\0' || (n == 1 && s[n - 1] == '/'))
 		s = (char *)hit->def;
 	if (!s)
@@ -1612,9 +1645,10 @@ lws_http_action(struct lws *wsi)
 #if defined(LWS_WITH_FILE_OPS)
 	if (hit->origin_protocol == LWSMPRO_FILE)
 		m = lws_http_serve(wsi, s, hit->origin, hit);
-#endif
 
-	if (m > 0) {
+	if (m > 0)
+#endif
+	{
 		/*
 		 * lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL);
 		 */
@@ -1655,77 +1689,72 @@ deal_body:
 	 * In any case, return 0 and let lws_read decide how to
 	 * proceed based on state
 	 */
-	if (lwsi_state(wsi) != LRS_ISSUING_FILE) {
-		/* Prepare to read body if we have a content length: */
-		lwsl_debug("wsi->http.rx_content_length %lld %d %d\n",
-			   (long long)wsi->http.rx_content_length,
-			   wsi->upgraded_to_http2, wsi->http2_substream);
+	if (lwsi_state(wsi) == LRS_ISSUING_FILE)
+		return 0;
 
-		if (wsi->http.content_length_explicitly_zero &&
-		    lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI)) {
+	/* Prepare to read body if we have a content length: */
+	lwsl_debug("wsi->http.rx_content_length %lld %d %d\n",
+		   (long long)wsi->http.rx_content_length,
+		   wsi->upgraded_to_http2, wsi->mux_substream);
 
-			/*
-			 * POST with an explicit content-length of zero
-			 *
-			 * If we don't give the user code the empty HTTP_BODY
-			 * callback, he may become confused to hear the
-			 * HTTP_BODY_COMPLETION (due to, eg, instantiation of
-			 * lws_spa never happened).
-			 *
-			 * HTTP_BODY_COMPLETION is responsible for sending the
-			 * result status code and result body if any, and
-			 * do the transaction complete processing.
-			 */
-			if (wsi->protocol->callback(wsi,
-					LWS_CALLBACK_HTTP_BODY,
-					wsi->user_space, NULL, 0))
-				return 1;
-			if (wsi->protocol->callback(wsi,
-					LWS_CALLBACK_HTTP_BODY_COMPLETION,
-					wsi->user_space, NULL, 0))
-				return 1;
+	if (wsi->http.content_length_explicitly_zero &&
+	    lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI)) {
 
-			return 0;
-		}
+		/*
+		 * POST with an explicit content-length of zero
+		 *
+		 * If we don't give the user code the empty HTTP_BODY callback,
+		 * he may become confused to hear the HTTP_BODY_COMPLETION (due
+		 * to, eg, instantiation of lws_spa never happened).
+		 *
+		 * HTTP_BODY_COMPLETION is responsible for sending the result
+		 * status code and result body if any, and to do the transaction
+		 * complete processing.
+		 */
+		if (wsi->protocol->callback(wsi, LWS_CALLBACK_HTTP_BODY,
+					    wsi->user_space, NULL, 0))
+			return 1;
+		if (wsi->protocol->callback(wsi, LWS_CALLBACK_HTTP_BODY_COMPLETION,
+					    wsi->user_space, NULL, 0))
+			return 1;
 
-		if (wsi->http.rx_content_length > 0) {
+		return 0;
+	}
 
-			if (lwsi_state(wsi) != LRS_DISCARD_BODY) {
-				lwsi_set_state(wsi, LRS_BODY);
-				lwsl_info("%s: %p: LRS_BODY state set (0x%x)\n",
-				    __func__, wsi, wsi->wsistate);
-			}
-			wsi->http.rx_content_remain =
-					wsi->http.rx_content_length;
+	if (wsi->http.rx_content_length <= 0)
+		return 0;
 
-			/*
-			 * At this point we have transitioned from deferred
-			 * action to expecting BODY on the stream wsi, if it's
-			 * in a bundle like h2.  So if the stream wsi has its
-			 * own buflist, we need to deal with that first.
-			 */
+	if (lwsi_state(wsi) != LRS_DISCARD_BODY) {
+		lwsi_set_state(wsi, LRS_BODY);
+		lwsl_info("%s: %p: LRS_BODY state set (0x%x)\n", __func__, wsi,
+			  (int)wsi->wsistate);
+	}
+	wsi->http.rx_content_remain = wsi->http.rx_content_length;
 
-			while (1) {
-				struct lws_tokens ebuf;
-				int m;
+	/*
+	 * At this point we have transitioned from deferred
+	 * action to expecting BODY on the stream wsi, if it's
+	 * in a bundle like h2.  So if the stream wsi has its
+	 * own buflist, we need to deal with that first.
+	 */
 
-				ebuf.len = (int)lws_buflist_next_segment_len(
-						&wsi->buflist,
-						&ebuf.token);
-				if (!ebuf.len)
-					break;
-				lwsl_debug("%s: consuming %d\n", __func__,
-							(int)ebuf.len);
-				m = lws_read_h1(wsi, ebuf.token,
-						ebuf.len);
-				if (m < 0)
-					return -1;
+	while (1) {
+		struct lws_tokens ebuf;
+		int m;
 
-				if (lws_buflist_aware_finished_consuming(wsi,
-							&ebuf, m, 1, __func__))
-					return -1;
-			}
-		}
+		ebuf.len = (int)lws_buflist_next_segment_len(&wsi->buflist,
+							     &ebuf.token);
+		if (!ebuf.len)
+			break;
+
+		lwsl_debug("%s: consuming %d\n", __func__, (int)ebuf.len);
+		m = lws_read_h1(wsi, ebuf.token, ebuf.len);
+		if (m < 0)
+			return -1;
+
+		if (lws_buflist_aware_finished_consuming(wsi, &ebuf, m, 1,
+							 __func__))
+			return -1;
 	}
 
 	return 0;
@@ -1741,8 +1770,8 @@ lws_confirm_host_header(struct lws *wsi)
 {
 	struct lws_tokenize ts;
 	lws_tokenize_elem e;
+	int port = 80, n;
 	char buf[128];
-	int port = 80;
 
 	/*
 	 * this vhost wants us to validate what the
@@ -1763,11 +1792,12 @@ lws_confirm_host_header(struct lws *wsi)
 	lws_tokenize_init(&ts, buf, LWS_TOKENIZE_F_DOT_NONTERM /* server.com */|
 				    LWS_TOKENIZE_F_NO_FLOATS /* 1.server.com */|
 				    LWS_TOKENIZE_F_MINUS_NONTERM /* a-b.com */);
-	ts.len = lws_hdr_copy(wsi, buf, sizeof(buf) - 1, WSI_TOKEN_HOST);
-	if (ts.len <= 0) {
+	n = lws_hdr_copy(wsi, buf, sizeof(buf) - 1, WSI_TOKEN_HOST);
+	if (n <= 0) {
 		lwsl_info("%s: missing or oversize host header\n", __func__);
 		return 1;
 	}
+	ts.len = n;
 
 	if (lws_tokenize(&ts) != LWS_TOKZE_TOKEN)
 		goto bad_format;
@@ -1862,6 +1892,7 @@ int
 lws_handshake_server(struct lws *wsi, unsigned char **buf, size_t len)
 {
 	struct lws_context *context = lws_get_context(wsi);
+	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 #if defined(LWS_WITH_HTTP2)
 	struct allocated_headers *ah;
 #endif
@@ -2001,6 +2032,32 @@ raw_transition:
 			}
 		}
 
+		/*
+		 * So he may have come to us requesting one or another kind
+		 * of upgrade from http... but we may want to redirect him at
+		 * http level.  In that case, we need to check the redirect
+		 * situation even though he's not actually wanting http and
+		 * prioritize returning that if there is one.
+		 */
+
+		{
+			const struct lws_http_mount *hit = NULL;
+			int uri_len = 0, ha, n;
+			char *uri_ptr = NULL;
+
+			n = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
+			if (n >= 0) {
+				hit = lws_find_mount(wsi, uri_ptr, uri_len);
+				if (hit) {
+					n = lws_http_redirect_hit(pt, wsi, hit, uri_ptr,
+								  uri_len, &ha);
+					if (ha)
+						return n;
+				}
+			}
+		}
+
+
 
 		if (lws_hdr_total_length(wsi, WSI_TOKEN_CONNECT)) {
 			lwsl_info("Changing to RAW mode\n");
@@ -2122,8 +2179,7 @@ upgrade_h2c:
 		wsi->http.ah = ah;
 
 		if (!wsi->h2.h2n) {
-			wsi->h2.h2n = lws_zalloc(sizeof(*wsi->h2.h2n),
-						   "h2n");
+			wsi->h2.h2n = lws_zalloc(sizeof(*wsi->h2.h2n), "h2n");
 			if (!wsi->h2.h2n)
 				return 1;
 		}
@@ -2132,9 +2188,9 @@ upgrade_h2c:
 
 		/* HTTP2 union */
 
-		lws_h2_settings(wsi, &wsi->h2.h2n->set, (unsigned char *)tbuf, n);
+		lws_h2_settings(wsi, &wsi->h2.h2n->peer_set, (uint8_t *)tbuf, n);
 
-		lws_hpack_dynamic_size(wsi, wsi->h2.h2n->set.s[
+		lws_hpack_dynamic_size(wsi, wsi->h2.h2n->peer_set.s[
 		                                      H2SET_HEADER_TABLE_SIZE]);
 
 		strcpy(tbuf, "HTTP/1.1 101 Switching Protocols\x0d\x0a"
@@ -2265,7 +2321,7 @@ lws_http_transaction_completed(struct lws *wsi)
 #endif
 
 	/* if we can't go back to accept new headers, drop the connection */
-	if (wsi->http2_substream)
+	if (wsi->mux_substream)
 		return 1;
 
 	if (wsi->seen_zero_length_recv)
@@ -2286,7 +2342,7 @@ lws_http_transaction_completed(struct lws *wsi)
 	 * with no partials is in lws_server_socket_service() below.
 	 */
 	lwsl_debug("%s: %p: setting DEF_ACT from 0x%x\n", __func__,
-		   wsi, wsi->wsistate);
+		   wsi, (int)wsi->wsistate);
 	lwsi_set_state(wsi, LRS_DEFERRING_ACTION);
 	wsi->http.tx_content_length = 0;
 	wsi->http.tx_content_remain = 0;
@@ -2364,14 +2420,14 @@ lws_http_transaction_completed(struct lws *wsi)
 				lwsl_debug("acquired ah\n");
 
 	lwsl_debug("%s: %p: keep-alive await new transaction (state 0x%x)\n",
-			__func__, wsi, wsi->wsistate);
+		   __func__, wsi, (int)wsi->wsistate);
 	lws_callback_on_writable(wsi);
 
 	return 0;
 }
 
 #if defined(LWS_WITH_FILE_OPS)
-LWS_VISIBLE int
+int
 lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 		    const char *other_headers, int other_headers_len)
 {
@@ -2414,7 +2470,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 			if (lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND,
 						   NULL))
 						return -1;
-			return !wsi->http2_substream;
+			return !wsi->mux_substream;
 		}
 	}
 
@@ -2558,7 +2614,7 @@ lws_serve_http_file(struct lws *wsi, const char *file, const char *content_type,
 		goto bail;
 #endif
 
-	if (!wsi->http2_substream) {
+	if (!wsi->mux_substream) {
 		/* for http/1.1 ... */
 		if (!wsi->sending_chunked
 #if defined(LWS_WITH_HTTP_STREAM_COMPRESSION)
@@ -2674,7 +2730,7 @@ bail:
 
 #if defined(LWS_WITH_FILE_OPS)
 
-LWS_VISIBLE int lws_serve_http_file_fragment(struct lws *wsi)
+int lws_serve_http_file_fragment(struct lws *wsi)
 {
 	struct lws_context *context = wsi->context;
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
@@ -2686,7 +2742,7 @@ LWS_VISIBLE int lws_serve_http_file_fragment(struct lws *wsi)
 #endif
 	int n, m;
 
-	lwsl_debug("wsi->http2_substream %d\n", wsi->http2_substream);
+	lwsl_debug("wsi->mux_substream %d\n", wsi->mux_substream);
 
 	do {
 
@@ -2725,10 +2781,7 @@ LWS_VISIBLE int lws_serve_http_file_fragment(struct lws *wsi)
 			goto all_sent;
 
 		n = 0;
-
-		pstart = pt->serv_buf + LWS_H2_FRAME_HEADER_LENGTH;
-
-		p = pstart;
+		p = pstart = pt->serv_buf + LWS_H2_FRAME_HEADER_LENGTH;
 
 #if defined(LWS_WITH_RANGES)
 		if (wsi->http.range.count_ranges && !wsi->http.range.inside) {
@@ -2773,7 +2826,7 @@ LWS_VISIBLE int lws_serve_http_file_fragment(struct lws *wsi)
 				poss = wsi->http.tx_content_remain;
 
 		/*
-		 * if there is a hint about how much we will do well to send at
+		 * If there is a hint about how much we will do well to send at
 		 * one time, restrict ourselves to only trying to send that.
 		 */
 		if (wsi->protocol->tx_packet_size &&
@@ -2781,19 +2834,25 @@ LWS_VISIBLE int lws_serve_http_file_fragment(struct lws *wsi)
 			poss = wsi->protocol->tx_packet_size;
 
 		if (wsi->role_ops->tx_credit) {
-			lws_filepos_t txc = wsi->role_ops->tx_credit(wsi);
+			lws_filepos_t txc =
+				wsi->role_ops->tx_credit(wsi, LWSTXCR_US_TO_PEER, 0);
 
 			if (!txc) {
-				lwsl_info("%s: came here with no tx credit\n",
-						__func__);
+				/*
+				 * We shouldn't've been able to get the
+				 * WRITEABLE if we are skint
+				 */
+				lwsl_notice("%s: %p: no tx credit\n", __func__,
+						wsi);
+
 				return 0;
 			}
 			if (txc < poss)
 				poss = txc;
 
 			/*
-			 * consumption of the actual payload amount sent will be
-			 * handled when the role data frame is sent
+			 * Tracking consumption of the actual payload amount
+			 * will be handled when the role data frame is sent...
 			 */
 		}
 
@@ -2924,7 +2983,7 @@ all_sent:
 					 * state, not the root connection at the
 					 * network level
 					 */
-					if (wsi->http2_substream)
+					if (wsi->mux_substream)
 						return 1;
 					else
 						return -1;
@@ -2952,7 +3011,7 @@ file_had_it:
 #endif
 
 #if defined(LWS_WITH_SERVER)
-LWS_VISIBLE void
+void
 lws_server_get_canonical_hostname(struct lws_context *context,
 				  const struct lws_context_creation_info *info)
 {

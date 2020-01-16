@@ -64,7 +64,7 @@ __lws_set_timer_usecs(struct lws *wsi, lws_usec_t us)
 	__lws_sul_insert(&pt->pt_sul_owner, &wsi->sul_hrtimer, us);
 }
 
-LWS_VISIBLE void
+void
 lws_set_timer_usecs(struct lws *wsi, lws_usec_t usecs)
 {
 	__lws_set_timer_usecs(wsi, usecs);
@@ -156,8 +156,8 @@ lws_set_timeout(struct lws *wsi, enum pending_timeout reason, int secs)
 	if (secs == LWS_TO_KILL_ASYNC)
 		secs = 0;
 
-	// assert(!secs || !wsi->h2_stream_immortal);
-	if (secs && wsi->h2_stream_immortal)
+	// assert(!secs || !wsi->mux_stream_immortal);
+	if (secs && wsi->mux_stream_immortal)
 		lwsl_err("%s: on immortal stream %d %d\n", __func__, reason, secs);
 
 	lws_pt_lock(pt, __func__);

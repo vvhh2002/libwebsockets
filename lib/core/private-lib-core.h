@@ -29,7 +29,7 @@
 #include "lws_config_private.h"
 
 #if defined(LWS_WITH_CGI) && defined(LWS_HAVE_VFORK) && \
-    !defined(NO_GNU_SOURCE_THIS_TIME)
+    !defined(NO_GNU_SOURCE_THIS_TIME) && !defined(_GNU_SOURCE)
  #define  _GNU_SOURCE
 #endif
 
@@ -106,7 +106,6 @@
  #define strerror(x) ""
 #endif
 
-
  /*
   *
   *  ------ private platform defines ------
@@ -134,6 +133,21 @@
   */
 
 #include "libwebsockets.h"
+
+/*
+ * Generic bidi tx credit management
+ */
+
+struct lws_tx_credit {
+	int32_t			tx_cr;		/* our credit to write peer */
+	int32_t			peer_tx_cr_est; /* peer's credit to write us */
+
+	int32_t			manual_initial_tx_credit;
+
+	uint8_t			skint; /* unable to write anything */
+	uint8_t			manual;
+};
+
 
 #include "private-lib-tls.h"
 
@@ -265,6 +279,14 @@ typedef struct lws_system_blob {
 	char	is_direct;
 } lws_system_blob_t;
 
+
+typedef struct lws_attach_item {
+	lws_dll2_t			list;
+	lws_attach_cb_t			cb;
+	void				*opaque;
+	lws_system_states_t		state;
+} lws_attach_item_t;
+
 /*
  * the rest is managed per-context, that includes
  *
@@ -291,6 +313,10 @@ struct lws_context {
 	struct lws_context_per_thread pt[LWS_MAX_SMP];
 	lws_retry_bo_t	default_retry;
 	lws_sorted_usec_list_t sul_system_state;
+
+#if defined(LWS_AMAZON_RTOS)
+	struct sockaddr_in frt_pipe_si;
+#endif
 
 #if defined(LWS_WITH_HTTP2)
 	struct http2_settings set;
@@ -486,9 +512,12 @@ LWS_EXTERN int
 lws_find_string_in_file(const char *filename, const char *str, int stringlen);
 #endif
 
-
 signed char char_to_hex(const char c);
 
+#if defined(LWS_WITH_NETWORK)
+int
+lws_system_do_attach(struct lws_context_per_thread *pt);
+#endif
 
 struct lws_buflist {
 	struct lws_buflist *next;

@@ -28,7 +28,7 @@
 #include "private-lib-core.h"
 
 
-LWS_VISIBLE int
+int
 lws_send_pipe_choked(struct lws *wsi)
 {	struct lws *wsi_eff;
 
@@ -138,7 +138,7 @@ lws_plat_set_socket_options(struct lws_vhost *vhost, lws_sockfd_type fd,
 }
 
 
-LWS_EXTERN int
+int
 lws_interface_to_sa(int ipv6,
 		const char *ifname, struct sockaddr_in *addr, size_t addrlen)
 {
@@ -358,7 +358,7 @@ lws_plat_if_up(const char *ifname, int fd, int up)
 }
 
 int
-lws_plat_BINDTODEVICE(int fd, const char *ifname)
+lws_plat_BINDTODEVICE(lws_sockfd_type fd, const char *ifname)
 {
 	lwsl_err("%s: UNIMPLEMENTED on this platform\n", __func__);
 

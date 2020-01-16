@@ -22,7 +22,9 @@
  * IN THE SOFTWARE.
  */
 
+#if !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
+#endif
 #include "private-lib-core.h"
 
 lws_usec_t
@@ -45,13 +47,19 @@ lws_now_usecs(void)
 #endif
 }
 
-LWS_VISIBLE int
-lws_get_random(struct lws_context *context, void *buf, int len)
+size_t
+lws_get_random(struct lws_context *context, void *buf, size_t len)
 {
-	return read(context->fd_random, (char *)buf, len);
+#if defined(__COVERITY__)
+	memset(buf, 0, len);
+	return len;
+#else
+	/* coverity[tainted_scalar] */
+	return (size_t)read(context->fd_random, (char *)buf, len);
+#endif
 }
 
-LWS_VISIBLE void lwsl_emit_syslog(int level, const char *line)
+void lwsl_emit_syslog(int level, const char *line)
 {
 	int syslog_level = LOG_DEBUG;
 

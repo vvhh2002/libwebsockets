@@ -59,7 +59,7 @@ static const char * const log_level_names[] = {
 };
 #endif
 
-LWS_VISIBLE int
+int
 lwsl_timestamp(int level, char *p, int len)
 {
 #ifndef LWS_PLAT_OPTEE
@@ -88,7 +88,7 @@ lwsl_timestamp(int level, char *p, int len)
 	for (n = 0; n < LLL_COUNT; n++) {
 		if (level != (1 << n))
 			continue;
-		now = lws_now_usecs() / 100;
+
 		if (ptm)
 			n = lws_snprintf(p, len,
 				"[%04d/%02d/%02d %02d:%02d:%02d:%04d] %s: ",
@@ -124,13 +124,13 @@ static const char * const colours[] = {
 	"[33m", /* LLL_EXT */
 	"[33m", /* LLL_CLIENT */
 	"[33;1m", /* LLL_LATENCY */
-	"[30;1m", /* LLL_USER */
+       "[0;1m", /* LLL_USER */
 	"[31m", /* LLL_THREAD */
 };
 
 static char tty;
 
-LWS_VISIBLE void
+void
 lwsl_emit_stderr(int level, const char *line)
 {
 	char buf[50];
@@ -153,7 +153,7 @@ lwsl_emit_stderr(int level, const char *line)
 		fprintf(stderr, "%s%s", buf, line);
 }
 
-LWS_VISIBLE void
+void
 lwsl_emit_stderr_notimestamp(int level, const char *line)
 {
 	int n, m = LWS_ARRAY_SIZE(colours) - 1;
@@ -177,7 +177,7 @@ lwsl_emit_stderr_notimestamp(int level, const char *line)
 #endif
 
 #if !(defined(LWS_PLAT_OPTEE) && !defined(LWS_WITH_NETWORK))
-LWS_VISIBLE void _lws_logv(int filter, const char *format, va_list vl)
+void _lws_logv(int filter, const char *format, va_list vl)
 {
 #if LWS_MAX_SMP == 1
 	static char buf[256];
@@ -205,7 +205,7 @@ LWS_VISIBLE void _lws_logv(int filter, const char *format, va_list vl)
 	lwsl_emit(filter, buf);
 }
 
-LWS_VISIBLE void _lws_log(int filter, const char *format, ...)
+void _lws_log(int filter, const char *format, ...)
 {
 	va_list ap;
 
@@ -214,7 +214,7 @@ LWS_VISIBLE void _lws_log(int filter, const char *format, ...)
 	va_end(ap);
 }
 #endif
-LWS_VISIBLE void lws_set_log_level(int level,
+void lws_set_log_level(int level,
 				   void (*func)(int level, const char *line))
 {
 	log_level = level;
@@ -222,12 +222,12 @@ LWS_VISIBLE void lws_set_log_level(int level,
 		lwsl_emit = func;
 }
 
-LWS_VISIBLE int lwsl_visible(int level)
+int lwsl_visible(int level)
 {
 	return log_level & level;
 }
 
-LWS_VISIBLE void
+void
 lwsl_hexdump_level(int hexdump_level, const void *vbuf, size_t len)
 {
 	unsigned char *buf = (unsigned char *)vbuf;
@@ -280,7 +280,7 @@ lwsl_hexdump_level(int hexdump_level, const void *vbuf, size_t len)
 	_lws_log(hexdump_level, "\n");
 }
 
-LWS_VISIBLE void
+void
 lwsl_hexdump(const void *vbuf, size_t len)
 {
 #if defined(_DEBUG)

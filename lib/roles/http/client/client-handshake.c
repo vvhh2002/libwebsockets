@@ -29,6 +29,7 @@ static int
 lws_getaddrinfo46(struct lws *wsi, const char *ads, struct addrinfo **result)
 {
 	struct addrinfo hints;
+	int n;
 
 	memset(&hints, 0, sizeof(hints));
 	*result = NULL;
@@ -48,7 +49,11 @@ lws_getaddrinfo46(struct lws *wsi, const char *ads, struct addrinfo **result)
 		hints.ai_family = PF_UNSPEC;
 	}
 
-	return getaddrinfo(ads, NULL, &hints, result);
+	n = getaddrinfo(ads, NULL, &hints, result);
+
+	lwsl_info("%s: getaddrinfo '%s' says %d\n", __func__, ads, n);
+
+	return n;
 }
 #endif
 
@@ -64,10 +69,8 @@ lws_client_connect_4_established(struct lws *wsi, struct lws *wsi_piggyback,
 	const char *cce = "";
 	int n, m, rawish = 0;
 
-	if (wsi->stash)
-		meth = wsi->stash->cis[CIS_METHOD];
-	else
-		meth = lws_hdr_simple_ptr(wsi, _WSI_TOKEN_CLIENT_METHOD);
+	meth = lws_wsi_client_stash_item(wsi, CIS_METHOD,
+					 _WSI_TOKEN_CLIENT_METHOD);
 
 	if (meth && !strcmp(meth, "RAW"))
 		rawish = 1;
@@ -83,11 +86,10 @@ lws_client_connect_4_established(struct lws *wsi, struct lws *wsi_piggyback,
 	if (wsi->vhost->http.http_proxy_port) {
 		const char *cpa;
 
-		if (wsi->stash)
-			cpa = wsi->stash->cis[CIS_ADDRESS];
-		else
-			cpa = lws_hdr_simple_ptr(wsi,
-					_WSI_TOKEN_CLIENT_PEER_ADDRESS);
+		cpa = lws_wsi_client_stash_item(wsi, CIS_ADDRESS,
+						_WSI_TOKEN_CLIENT_PEER_ADDRESS);
+		if (!cpa)
+			goto failed;
 
 		lwsl_info("%s: going via proxy\n", __func__);
 
@@ -128,7 +130,7 @@ lws_client_connect_4_established(struct lws *wsi, struct lws *wsi_piggyback,
 		}
 
 		lws_set_timeout(wsi, PENDING_TIMEOUT_AWAITING_PROXY_RESPONSE,
-				AWAITING_TIMEOUT);
+				wsi->context->timeout_secs);
 
 		lwsi_set_state(wsi, LRS_WAITING_PROXY_REPLY);
 
@@ -149,7 +151,7 @@ lws_client_connect_4_established(struct lws *wsi, struct lws *wsi_piggyback,
 
 		lws_set_timeout(wsi,
 				PENDING_TIMEOUT_AWAITING_SOCKS_GREETING_REPLY,
-				AWAITING_TIMEOUT);
+				wsi->context->timeout_secs);
 
 		lwsi_set_state(wsi, LRS_WAITING_SOCKS_GREETING_REPLY);
 
@@ -196,6 +198,17 @@ send_hs:
 		else {
 			/* for a method = "RAW" connection, this makes us
 			 * established */
+#if 0
+#if defined(LWS_WITH_SYS_ASYNC_DNS)
+			if (wsi->tls.use_ssl & LCCSCF_USE_SSL) {
+				n = lws_ssl_client_connect1(wsi);
+				if (n < 0) {
+					lwsl_err("%s: lws_ssl_client_connect1 failed\n", __func__);
+					goto failed;
+				}
+			}
+#endif
+#endif
 
 			/* clear his established timeout */
 			lws_set_timeout(wsi, NO_PENDING_TIMEOUT, 0);
@@ -231,7 +244,7 @@ send_hs:
 		 */
 
 		lws_set_timeout(wsi, PENDING_TIMEOUT_SENT_CLIENT_HANDSHAKE,
-				AWAITING_TIMEOUT);
+				wsi->context->timeout_secs);
 
 		assert(lws_socket_is_valid(wsi->desc.sockfd));
 
@@ -314,6 +327,9 @@ lws_client_connect_3_connect(struct lws *wsi, const char *ads,
 		*/
 
 		if (!getsockopt(wsi->desc.sockfd, SOL_SOCKET, SO_ERROR,
+#if defined(WIN32)
+				(char *)
+#endif
 				&e, &sl)) {
 			if (!e) {
 				lwsl_info("%s: getsockopt check: conn OK\n",
@@ -411,6 +427,7 @@ lws_client_connect_3_connect(struct lws *wsi, const char *ads,
 		/* lws_getaddrinfo46 failed, there is no usable result */
 		lwsl_notice("%s: lws_getaddrinfo46 failed %d\n",
 				__func__, n);
+
 		cce = "ipv6 lws_getaddrinfo46 failed";
 		goto oom4;
 	}
@@ -522,11 +539,9 @@ ads_known:
 		lwsl_debug("%s: %p: WAITING_CONNECT\n", __func__, wsi);
 		lwsi_set_state(wsi, LRS_WAITING_CONNECT);
 
-#if !defined(LWS_AMAZON_RTOS)
-		if (wsi->context->event_loop_ops->accept)
-			if (wsi->context->event_loop_ops->accept(wsi))
+		if (wsi->context->event_loop_ops->sock_accept)
+			if (wsi->context->event_loop_ops->sock_accept(wsi))
 				goto try_next_result_closesock;
-#endif
 
 		if (__insert_wsi_socket_into_fds(wsi->context, wsi))
 			goto try_next_result_closesock;
@@ -546,17 +561,15 @@ ads_known:
 			wsi->protocol = &wsi->vhost->protocols[0];
 
 		lws_set_timeout(wsi, PENDING_TIMEOUT_AWAITING_CONNECT_RESPONSE,
-				AWAITING_TIMEOUT);
+				wsi->context->timeout_secs);
 
-		if (wsi->stash)
-			iface = wsi->stash->cis[CIS_IFACE];
-		else
-			iface = lws_hdr_simple_ptr(wsi, _WSI_TOKEN_CLIENT_IFACE);
+		iface = lws_wsi_client_stash_item(wsi, CIS_IFACE,
+						  _WSI_TOKEN_CLIENT_IFACE);
 
 		if (iface && *iface) {
-			n = lws_socket_bind(wsi->vhost, wsi->desc.sockfd, 0,
+			m = lws_socket_bind(wsi->vhost, wsi->desc.sockfd, 0,
 					    iface, wsi->ipv6);
-			if (n < 0)
+			if (m < 0)
 				goto try_next_result_fds;
 		}
 	}
@@ -617,7 +630,7 @@ ads_known:
 
 conn_good:
 
-	lwsl_debug("%s: Connection started\n", __func__);
+	lwsl_debug("%s: Connection started %p\n", __func__, wsi->dns_results);
 
 	/* the tcp connection has happend */
 
@@ -698,12 +711,13 @@ failed1:
 struct lws *
 lws_client_connect_2_dnsreq(struct lws *wsi)
 {
-	const char *meth = NULL, *ads;
 	struct addrinfo *result = NULL;
+	const char *meth = NULL, *ads;
 #if defined(LWS_WITH_IPV6)
 	struct sockaddr_in addr;
 	const char *iface;
 #endif
+	const char *adsin;
 	int n, port = 0;
 	struct lws *w;
 
@@ -713,10 +727,13 @@ lws_client_connect_2_dnsreq(struct lws *wsi)
 		return wsi;
 	}
 
-	if (wsi->stash)
-		meth = wsi->stash->cis[CIS_METHOD];
-	else
-		meth = lws_hdr_simple_ptr(wsi, _WSI_TOKEN_CLIENT_METHOD);
+	/*
+	 * The first job is figure out if we want to pipeline on or just join
+	 * an existing "active connection" to the same place
+	 */
+
+	meth = lws_wsi_client_stash_item(wsi, CIS_METHOD,
+					 _WSI_TOKEN_CLIENT_METHOD);
 
 	/* we only pipeline connections that said it was okay */
 
@@ -734,10 +751,24 @@ lws_client_connect_2_dnsreq(struct lws *wsi)
 
 	/* consult active connections to find out disposition */
 
-	switch (lws_vhost_active_conns(wsi, &w)) {
+	adsin = lws_wsi_client_stash_item(wsi, CIS_ADDRESS,
+					  _WSI_TOKEN_CLIENT_PEER_ADDRESS);
+
+	switch (lws_vhost_active_conns(wsi, &w, adsin)) {
 	case ACTIVE_CONNS_SOLO:
 		break;
 	case ACTIVE_CONNS_MUXED:
+		lwsl_notice("%s: ACTIVE_CONNS_MUXED\n", __func__);
+		if (lwsi_role_h2(wsi)) {
+			if (wsi->protocol->callback(wsi,
+						    LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP,
+						    wsi->user_space, NULL, 0))
+				goto failed1;
+
+			lwsi_set_state(wsi, LRS_H2_WAITING_TO_SEND_HEADERS);
+			lws_callback_on_writable(wsi);
+		}
+
 		return wsi;
 	case ACTIVE_CONNS_QUEUED:
 		return lws_client_connect_4_established(wsi, w, 0);
@@ -756,17 +787,19 @@ solo:
 		if (wsi->stash && wsi->stash->cis[CIS_HOST])
 			wsi->cli_hostname_copy =
 					lws_strdup(wsi->stash->cis[CIS_HOST]);
+#if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
 		else {
 			char *pa = lws_hdr_simple_ptr(wsi,
 					      _WSI_TOKEN_CLIENT_PEER_ADDRESS);
 			if (pa)
 				wsi->cli_hostname_copy = lws_strdup(pa);
 		}
+#endif
 	}
 
 	/*
-	 * If we made our own connection, and we're doing a method that can take
-	 * a pipeline, we are an "active client connection".
+	 * If we made our own connection, and we're doing a method that can
+	 * take a pipeline, we are an "active client connection".
 	 *
 	 * Add ourselves to the vhost list of those so that others can
 	 * piggyback on our transaction queue
@@ -897,12 +930,12 @@ next_step:
 #endif
 	return lws_client_connect_3_connect(wsi, ads, result, n, NULL);
 
-#if defined(LWS_WITH_SYS_ASYNC_DNS)
+//#if defined(LWS_WITH_SYS_ASYNC_DNS)
 failed1:
 	lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS, "client_connect2");
 
 	return NULL;
-#endif
+//#endif
 }
 
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
@@ -927,8 +960,11 @@ static uint8_t hnames2[] = {
  */
 struct lws *
 lws_client_reset(struct lws **pwsi, int ssl, const char *address, int port,
-		 const char *path, const char *host)
+		 const char *path, const char *host, char weak)
 {
+#if defined(LWS_ROLE_WS)
+	struct _lws_websocket_related *ws;
+#endif
 	char *stash, *p;
 	struct lws *wsi;
 	size_t size = 0;
@@ -1009,7 +1045,17 @@ lws_client_reset(struct lws **pwsi, int ssl, const char *address, int port,
 		   address, port, path, ssl, wsi->position_in_fds_table);
 
 	__remove_wsi_socket_from_fds(wsi);
+#if defined(LWS_ROLE_WS)
+	if (weak) {
+		ws = wsi->ws;
+		wsi->ws = NULL;
+	}
+#endif
 	__lws_reset_wsi(wsi); /* detaches ah here */
+#if defined(LWS_ROLE_WS)
+	if (weak)
+		wsi->ws = ws;
+#endif
 	wsi->client_pipeline = 1;
 
 	/* close the connection by hand */
@@ -1029,7 +1075,7 @@ lws_client_reset(struct lws **pwsi, int ssl, const char *address, int port,
 
 #if defined(LWS_WITH_TLS)
 	if (!ssl)
-		wsi->tls.use_ssl &= LCCSCF_USE_SSL;
+		wsi->tls.use_ssl &= ~LCCSCF_USE_SSL;
 	else
 		wsi->tls.use_ssl |= LCCSCF_USE_SSL;
 #else
@@ -1095,7 +1141,7 @@ lws_client_reset(struct lws **pwsi, int ssl, const char *address, int port,
 	lws_free_set_NULL(stash);
 
 #if defined(LWS_WITH_HTTP2)
-	if (wsi->client_h2_substream)
+	if (wsi->client_mux_substream)
 		wsi->h2.END_STREAM = wsi->h2.END_HEADERS = 0;
 #endif
 
