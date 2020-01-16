@@ -141,9 +141,13 @@ lws_ssl_client_bio_create(struct lws *wsi)
 	int n;
 #endif
 
-	if (wsi->stash)
+	if (wsi->stash) {
 		lws_strncpy(hostname, wsi->stash->cis[CIS_HOST], sizeof(hostname));
-	else {
+#if defined(LWS_HAVE_SSL_set_alpn_protos) && \
+    defined(LWS_HAVE_SSL_get0_alpn_selected)
+		alpn_comma = wsi->stash->cis[CIS_ALPN];
+#endif
+	} else {
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
 		if (lws_hdr_copy(wsi, hostname, sizeof(hostname),
 				 _WSI_TOKEN_CLIENT_HOST) <= 0)
@@ -191,6 +195,13 @@ lws_ssl_client_bio_create(struct lws *wsi)
 		// Handle the case where the hostname is an IP address.
 		if (!X509_VERIFY_PARAM_set1_ip_asc(param, hostname))
 			X509_VERIFY_PARAM_set1_host(param, hostname, 0);
+	}
+#else
+	if (!(wsi->tls.use_ssl & LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK)) {
+		lwsl_err("%s: your tls lib is too old to have "
+			 "X509_VERIFY_PARAM_set1_host, failing all client tls\n",
+			 __func__);
+		return -1;
 	}
 #endif
 
@@ -262,13 +273,15 @@ lws_ssl_client_bio_create(struct lws *wsi)
     defined(LWS_HAVE_SSL_get0_alpn_selected)
 	if (wsi->vhost->tls.alpn)
 		alpn_comma = wsi->vhost->tls.alpn;
+	if (wsi->stash)
+		alpn_comma = wsi->stash->cis[CIS_ALPN];
 #if defined(LWS_ROLE_H1) || defined(LWS_ROLE_H2)
 	if (lws_hdr_copy(wsi, hostname, sizeof(hostname),
 			 _WSI_TOKEN_CLIENT_ALPN) > 0)
 		alpn_comma = hostname;
 #endif
 
-	lwsl_info("client conn using alpn list '%s'\n", alpn_comma);
+	lwsl_info("%s client conn using alpn list '%s'\n", wsi->role_ops->name, alpn_comma);
 
 	n = lws_alpn_comma_to_openssl(alpn_comma, openssl_alpn,
 				      sizeof(openssl_alpn) - 1);
@@ -300,7 +313,7 @@ lws_ssl_client_bio_create(struct lws *wsi)
 		if (lws_system_blob_get_single_ptr(b, &data))
 			goto no_client_cert;
 
-		if (SSL_use_certificate_ASN1(wsi->tls.ssl, data, size) != 1) {
+		if (SSL_use_certificate_ASN1(wsi->tls.ssl, data, (int)size) != 1) {
 			lwsl_err("%s: use_certificate failed\n", __func__);
 			lws_tls_err_describe_clear();
 			goto no_client_cert;
@@ -320,9 +333,9 @@ lws_ssl_client_bio_create(struct lws *wsi)
 			goto no_client_cert;
 
 		if (SSL_use_PrivateKey_ASN1(EVP_PKEY_RSA, wsi->tls.ssl,
-					    data, size) != 1 &&
+					    data, (int)size) != 1 &&
 		    SSL_use_PrivateKey_ASN1(EVP_PKEY_EC, wsi->tls.ssl,
-					    data, size) != 1) {
+					    data, (int)size) != 1) {
 			lwsl_err("%s: use_privkey failed\n", __func__);
 			lws_tls_err_describe_clear();
 			goto no_client_cert;
@@ -380,7 +393,7 @@ lws_tls_client_connect(struct lws *wsi)
 
 	m = lws_ssl_get_error(wsi, n);
 
-	if (m == SSL_ERROR_SYSCALL)
+	if (m == SSL_ERROR_SYSCALL || m == SSL_ERROR_SSL)
 		return LWS_SSL_CAPABLE_ERROR;
 
 	if (m == SSL_ERROR_WANT_READ || SSL_want_read(wsi->tls.ssl))
@@ -449,7 +462,7 @@ lws_tls_client_vhost_extra_cert_mem(struct lws_vhost *vh,
                 const uint8_t *der, size_t der_len)
 {
 	X509_STORE *st;
-	X509 *x  = d2i_X509(NULL, &der, der_len);
+	X509 *x  = d2i_X509(NULL, &der, (long)der_len);
 	int n;
 
 	if (!x) {
@@ -707,10 +720,10 @@ lws_tls_client_create_vhost_context(struct lws_vhost *vh,
 		}
 
 		up = up1;
-		client_CA = d2i_X509(NULL, &up, amount);
+		client_CA = d2i_X509(NULL, &up, (long)amount);
 		if (!client_CA) {
 			lwsl_err("%s: d2i_X509 failed\n", __func__);
-			lwsl_hexdump_notice(up1, amount);
+			lwsl_hexdump_notice(up1, (size_t)amount);
 			lws_tls_err_describe_clear();
 		} else {
 			x509_store = X509_STORE_new();

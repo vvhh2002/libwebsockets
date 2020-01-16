@@ -390,6 +390,8 @@ lws_process_ws_upgrade2(struct lws *wsi)
 		l = lws_snprintf(combo, sizeof(combo), "%s (%s)", dotstar,
 				 wsi->protocol->name);
 
+		if (meth < 0)
+			meth = 0;
 		lws_prepare_access_log_info(wsi, combo, l, meth);
 		lws_access_log(wsi);
 	}
@@ -408,6 +410,7 @@ lws_process_ws_upgrade(struct lws *wsi)
 	char buf[128], name[64];
 	struct lws_tokenize ts;
 	lws_tokenize_elem e;
+	int n;
 
 	if (!wsi->protocol)
 		lwsl_err("NULL protocol at lws_read\n");
@@ -420,17 +423,17 @@ lws_process_ws_upgrade(struct lws *wsi)
 	 */
 
 #if defined(LWS_WITH_HTTP2)
-	if (!wsi->http2_substream) {
+	if (!wsi->mux_substream) {
 #endif
 
 		lws_tokenize_init(&ts, buf, LWS_TOKENIZE_F_COMMA_SEP_LIST |
 					    LWS_TOKENIZE_F_DOT_NONTERM |
 					    LWS_TOKENIZE_F_RFC7230_DELIMS |
 					    LWS_TOKENIZE_F_MINUS_NONTERM);
-		ts.len = lws_hdr_copy(wsi, buf, sizeof(buf) - 1,
-				      WSI_TOKEN_CONNECTION);
-		if (ts.len <= 0)
+		n = lws_hdr_copy(wsi, buf, sizeof(buf) - 1, WSI_TOKEN_CONNECTION);
+		if (n <= 0)
 			goto bad_conn_format;
+		ts.len = n;
 
 		do {
 			e = lws_tokenize(&ts);
@@ -465,7 +468,9 @@ lws_process_ws_upgrade(struct lws *wsi)
 		meth = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
 		hit = lws_find_mount(wsi, uri_ptr, uri_len);
 
-		if (hit && (meth == 0 || meth == 8) &&
+		if (hit && (meth == LWSHUMETH_GET ||
+			    meth == LWSHUMETH_CONNECT ||
+			    meth == LWSHUMETH_COLON_PATH) &&
 		    (hit->origin_protocol == LWSMPRO_HTTPS ||
 		     hit->origin_protocol == LWSMPRO_HTTP))
 			/*
@@ -492,11 +497,12 @@ lws_process_ws_upgrade(struct lws *wsi)
 				    LWS_TOKENIZE_F_MINUS_NONTERM |
 				    LWS_TOKENIZE_F_DOT_NONTERM |
 				    LWS_TOKENIZE_F_RFC7230_DELIMS);
-	ts.len = lws_hdr_copy(wsi, buf, sizeof(buf) - 1, WSI_TOKEN_PROTOCOL);
-	if (ts.len < 0) {
+	n = lws_hdr_copy(wsi, buf, sizeof(buf) - 1, WSI_TOKEN_PROTOCOL);
+	if (n < 0) {
 		lwsl_err("%s: protocol list too long\n", __func__);
 		return 1;
 	}
+	ts.len = n;
 	if (!ts.len) {
 		int n = wsi->vhost->default_protocol_index;
 		/*

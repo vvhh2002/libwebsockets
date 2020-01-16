@@ -22,7 +22,9 @@
  * IN THE SOFTWARE.
  */
 
-#define  _GNU_SOURCE
+#if !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 
 #include "private-lib-core.h"
 
@@ -112,7 +114,7 @@ lws_create_basic_wsi(struct lws_context *context, int tsi)
 	return new_wsi;
 }
 
-LWS_VISIBLE LWS_EXTERN int
+int
 lws_cgi(struct lws *wsi, const char * const *exec_array,
 	int script_uri_path_len, int timeout_secs,
 	const struct lws_protocol_vhost_options *mp_cgienv)
@@ -176,8 +178,8 @@ lws_cgi(struct lws *wsi, const char * const *exec_array,
 	}
 
 	for (n = 0; n < 3; n++) {
-		if (wsi->context->event_loop_ops->accept)
-			if (wsi->context->event_loop_ops->accept(cgi->stdwsi[n]))
+		if (wsi->context->event_loop_ops->sock_accept)
+			if (wsi->context->event_loop_ops->sock_accept(cgi->stdwsi[n]))
 				goto bail3;
 
 		if (__insert_wsi_socket_into_fds(wsi->context, cgi->stdwsi[n]))
@@ -564,7 +566,7 @@ enum header_recode {
 	HR_CRLF,
 };
 
-LWS_VISIBLE LWS_EXTERN int
+int
 lws_cgi_write_split_stdout_headers(struct lws *wsi)
 {
 	int n, m, cmd;
@@ -595,7 +597,7 @@ lws_cgi_write_split_stdout_headers(struct lws *wsi)
 					WSI_TOKEN_HTTP_TRANSFER_ENCODING,
 					(unsigned char *)"chunked", 7, &p, end))
 				return 1;
-			if (!(wsi->http2_substream))
+			if (!(wsi->mux_substream))
 				if (lws_add_http_header_by_token(wsi,
 						WSI_TOKEN_CONNECTION,
 						(unsigned char *)"close", 5,
@@ -613,7 +615,7 @@ lws_cgi_write_split_stdout_headers(struct lws *wsi)
 			 * Let's redo them at headers_pos forward using the
 			 * correct coding for http/1 or http/2
 			 */
-			if (!wsi->http2_substream)
+			if (!wsi->mux_substream)
 				goto post_hpack_recode;
 
 			p = wsi->http.cgi->headers_start;
@@ -748,7 +750,7 @@ post_hpack_recode:
 		if (!wsi->http.cgi->headers_buf) {
 			/* if we don't already have a headers buf, cook one */
 			n = 2048;
-			if (wsi->http2_substream)
+			if (wsi->mux_substream)
 				n = 4096;
 			wsi->http.cgi->headers_buf = lws_malloc(n + LWS_PRE,
 							   "cgi hdr buf");
@@ -919,7 +921,7 @@ agin:
 
 	/* payload processing */
 
-	m = !wsi->http.cgi->implied_chunked && !wsi->http2_substream &&
+	m = !wsi->http.cgi->implied_chunked && !wsi->mux_substream &&
 	//    !wsi->http.cgi->explicitly_chunked &&
 	    !wsi->http.cgi->content_length;
 	n = lws_get_socket_fd(wsi->http.cgi->stdwsi[LWS_STDOUT]);
@@ -934,7 +936,7 @@ agin:
 	if (n > 0) {
 		// lwsl_hexdump_notice(buf, n);
 
-		if (!wsi->http2_substream && m) {
+		if (!wsi->mux_substream && m) {
 			char chdr[LWS_HTTP_CHUNK_HDR_SIZE];
 			m = lws_snprintf(chdr, LWS_HTTP_CHUNK_HDR_SIZE - 3,
 					 "%X\x0d\x0a", n);
@@ -946,7 +948,7 @@ agin:
 
 
 #if defined(LWS_WITH_HTTP2)
-		if (wsi->http2_substream) {
+		if (wsi->mux_substream) {
 			struct lws *nwsi = lws_get_network_wsi(wsi);
 
 			__lws_set_timeout(wsi,
@@ -972,7 +974,7 @@ agin:
 		wsi->http.cgi->content_length_seen += n;
 	} else {
 
-		if (!wsi->http2_substream && m) {
+		if (!wsi->mux_substream && m) {
 			uint8_t term[LWS_PRE + 6];
 
 			lwsl_notice("%s: sent trailer\n", __func__);
@@ -989,7 +991,7 @@ agin:
 
 		if (wsi->cgi_stdout_zero_length) {
 			lwsl_debug("%s: stdout is POLLHUP'd\n", __func__);
-			if (wsi->http2_substream)
+			if (wsi->mux_substream)
 				m = lws_write(wsi, (unsigned char *)start, 0,
 					      LWS_WRITE_HTTP_FINAL);
 			else
@@ -1001,7 +1003,7 @@ agin:
 	return 0;
 }
 
-LWS_VISIBLE LWS_EXTERN int
+int
 lws_cgi_kill(struct lws *wsi)
 {
 	struct lws_cgi_args args;
@@ -1213,7 +1215,7 @@ finish_him:
 	return 0;
 }
 
-LWS_VISIBLE LWS_EXTERN struct lws *
+struct lws *
 lws_cgi_get_stdwsi(struct lws *wsi, enum lws_enum_stdinouterr ch)
 {
 	if (!wsi->http.cgi)

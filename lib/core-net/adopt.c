@@ -236,11 +236,9 @@ lws_adopt_descriptor_vhost2(struct lws *new_wsi, lws_adoption_type type,
 	if (new_wsi->role_ops->adoption_cb[lwsi_role_server(new_wsi)])
 		n = new_wsi->role_ops->adoption_cb[lwsi_role_server(new_wsi)];
 
-#if !defined(LWS_AMAZON_RTOS)
-	if (new_wsi->context->event_loop_ops->accept)
-		if (new_wsi->context->event_loop_ops->accept(new_wsi))
+	if (new_wsi->context->event_loop_ops->sock_accept)
+		if (new_wsi->context->event_loop_ops->sock_accept(new_wsi))
 			goto fail;
-#endif
 
 #if LWS_MAX_SMP > 1
 	/*
@@ -310,23 +308,39 @@ fail:
 
 /* if not a socket, it's a raw, non-ssl file descriptor */
 
-LWS_VISIBLE struct lws *
+struct lws *
 lws_adopt_descriptor_vhost(struct lws_vhost *vh, lws_adoption_type type,
 			   lws_sock_file_fd_type fd, const char *vh_prot_name,
-			   struct lws *parent, void *opaque)
+			   struct lws *parent)
+{
+	lws_adopt_desc_t info;
+
+	memset(&info, 0, sizeof(info));
+
+	info.vh = vh;
+	info.type = type;
+	info.fd = fd;
+	info.vh_prot_name = vh_prot_name;
+	info.parent = parent;
+
+	return lws_adopt_descriptor_vhost_via_info(&info);
+}
+
+struct lws *
+lws_adopt_descriptor_vhost_via_info(const lws_adopt_desc_t *info)
 {
 	struct lws *new_wsi;
 #if defined(LWS_WITH_PEER_LIMITS)
 	struct lws_peer *peer = NULL;
 
-	if (type & LWS_ADOPT_SOCKET) {
-		peer = lws_get_or_create_peer(vh, fd.sockfd);
+	if (info->type & LWS_ADOPT_SOCKET) {
+		peer = lws_get_or_create_peer(info->vh, info->fd.sockfd);
 
-		if (peer && vh->context->ip_limit_wsi &&
-		    peer->count_wsi >= vh->context->ip_limit_wsi) {
+		if (peer && info->vh->context->ip_limit_wsi &&
+		    peer->count_wsi >= info->vh->context->ip_limit_wsi) {
 			lwsl_notice("Peer reached wsi limit %d\n",
-					vh->context->ip_limit_wsi);
-			lws_stats_bump(&vh->context->pt[0],
+					info->vh->context->ip_limit_wsi);
+			lws_stats_bump(&info->vh->context->pt[0],
 					      LWSSTATS_C_PEER_LIMIT_WSI_DENIED,
 					      1);
 			return NULL;
@@ -334,39 +348,39 @@ lws_adopt_descriptor_vhost(struct lws_vhost *vh, lws_adoption_type type,
 	}
 #endif
 
-	new_wsi = lws_adopt_descriptor_vhost1(vh, type, vh_prot_name, parent,
-						opaque);
+	new_wsi = lws_adopt_descriptor_vhost1(info->vh, info->type,
+					      info->vh_prot_name, info->parent,
+					      info->opaque);
 	if (!new_wsi) {
-		if (type & LWS_ADOPT_SOCKET)
-			compatible_close(fd.sockfd);
+		if (info->type & LWS_ADOPT_SOCKET)
+			compatible_close(info->fd.sockfd);
 		return NULL;
 	}
 
 #if defined(LWS_WITH_ACCESS_LOG)
-		lws_get_peer_simple_fd(fd.sockfd, new_wsi->simple_ip,
+		lws_get_peer_simple_fd(info->fd.sockfd, new_wsi->simple_ip,
 					sizeof(new_wsi->simple_ip));
 #endif
 
 #if defined(LWS_WITH_PEER_LIMITS)
 	if (peer)
-		lws_peer_add_wsi(vh->context, peer, new_wsi);
+		lws_peer_add_wsi(info->vh->context, peer, new_wsi);
 #endif
 
-	return lws_adopt_descriptor_vhost2(new_wsi, type, fd);
+	return lws_adopt_descriptor_vhost2(new_wsi, info->type, info->fd);
 }
 
-LWS_VISIBLE struct lws *
+struct lws *
 lws_adopt_socket_vhost(struct lws_vhost *vh, lws_sockfd_type accept_fd)
 {
 	lws_sock_file_fd_type fd;
 
 	fd.sockfd = accept_fd;
 	return lws_adopt_descriptor_vhost(vh, LWS_ADOPT_SOCKET |
-			LWS_ADOPT_HTTP | LWS_ADOPT_ALLOW_SSL, fd, NULL, NULL,
-			NULL);
+			LWS_ADOPT_HTTP | LWS_ADOPT_ALLOW_SSL, fd, NULL, NULL);
 }
 
-LWS_VISIBLE struct lws *
+struct lws *
 lws_adopt_socket(struct lws_context *context, lws_sockfd_type accept_fd)
 {
 	return lws_adopt_socket_vhost(context->vhost_list, accept_fd);
@@ -527,7 +541,7 @@ lws_create_adopt_udp2(struct lws *wsi, const char *ads,
 		if (!wsi->do_bind && !wsi->pf_packet) {
 
 			if (connect(sock.sockfd, wsi->dns_results_next->ai_addr,
-				     wsi->dns_results_next->ai_addrlen) == -1) {
+				     (socklen_t)wsi->dns_results_next->ai_addrlen) == -1) {
 				lwsl_err("%s: conn fd %d fam %d %s:%u failed "
 					 "(salen %d) errno %d\n", __func__,
 					 sock.sockfd,
@@ -541,7 +555,7 @@ lws_create_adopt_udp2(struct lws *wsi, const char *ads,
 
 			memcpy(&wsi->udp->sa, wsi->dns_results_next->ai_addr,
 			       wsi->dns_results_next->ai_addrlen);
-			wsi->udp->salen = wsi->dns_results_next->ai_addrlen;
+			wsi->udp->salen = (socklen_t)wsi->dns_results_next->ai_addrlen;
 		}
 
 		/* we connected: complete the udp socket adoption flow */
@@ -677,7 +691,7 @@ bail:
 #endif
 #endif
 
-LWS_VISIBLE struct lws *
+struct lws *
 lws_adopt_socket_readbuf(struct lws_context *context, lws_sockfd_type accept_fd,
 			 const char *readbuf, size_t len)
 {
@@ -685,7 +699,7 @@ lws_adopt_socket_readbuf(struct lws_context *context, lws_sockfd_type accept_fd,
 				    readbuf, len);
 }
 
-LWS_VISIBLE struct lws *
+struct lws *
 lws_adopt_socket_vhost_readbuf(struct lws_vhost *vhost,
 			       lws_sockfd_type accept_fd,
 			       const char *readbuf, size_t len)

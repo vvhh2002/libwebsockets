@@ -108,7 +108,8 @@ option(LWS_WITH_LEJP "With the Lightweight JSON Parser" ON)
 option(LWS_WITH_SQLITE3 "Require SQLITE3 support" OFF)
 option(LWS_WITH_STRUCT_JSON "Generic struct serialization to and from JSON" OFF)
 option(LWS_WITH_STRUCT_SQLITE3 "Generic struct serialization to and from SQLITE3" OFF)
-option(LWS_WITH_SMTP "Provide SMTP support" OFF)
+# broken atm
+#option(LWS_WITH_SMTP "Provide SMTP support" OFF)
 if (WIN32 OR LWS_WITH_ESP32)
 option(LWS_WITH_DIR "Directory scanning api support" OFF)
 option(LWS_WITH_LEJP_CONF "With LEJP configuration parser as used by lwsws" OFF)
@@ -242,6 +243,7 @@ if (NOT LWS_WITH_NETWORK)
 	set(LWS_WITH_SEQUENCER 0)
 	set(LWS_ROLE_DBUS 0)
 	set(LWS_WITH_LWS_DSH 0)
+	set(LWS_WITH_THREADPOOL 0)
 endif()
 
 if (LWS_WITH_STRUCT_SQLITE3)
@@ -424,7 +426,7 @@ endif()
 
 if (LWS_WITH_GENERIC_SESSIONS)
  set(LWS_WITH_SQLITE3 1)
- set(LWS_WITH_SMTP 1)
+ # set(LWS_WITH_SMTP 1)
  set(LWS_WITH_STRUCT_SQLITE3 1)
 endif()
 
@@ -441,10 +443,12 @@ if (LWS_PLAT_FREERTOS)
  set(LWS_HAVE_MALLOC 1)
  set(LWS_HAVE_REALLOC 1)
  set(LWS_HAVE_GETIFADDRS 1)
- set(LWS_WITH_ZIP_FOPS 1)
  set(LWS_WITH_CUSTOM_HEADERS 0)
 endif()
 
+if (LWS_WITH_ESP32)
+ set(LWS_WITH_ZIP_FOPS 1)
+endif()
 
 if (WIN32)
 set(LWS_MAX_SMP 1)
@@ -737,9 +741,9 @@ endif()
 
 # using any abstract protocol enables LWS_WITH_ABSTRACT
 
-if (LWS_WITH_SMTP)
-	set(LWS_WITH_ABSTRACT 1)
-endif()
+#if (LWS_WITH_SMTP)
+#	set(LWS_WITH_ABSTRACT 1)
+#endif()
 
 
 
@@ -929,18 +933,20 @@ CHECK_C_SOURCE_COMPILES("#include <stdint.h>
 		return 0;
 	}" LWS_HAS_INTPTR_T)
 
-set(CMAKE_REQUIRED_FLAGS "-pthread")	
-CHECK_C_SOURCE_COMPILES("#define _GNU_SOURCE 
-	#include <pthread.h> 
-	int main(void) { 
-		pthread_t th = 0;
-		pthread_setname_np(th, NULL);
-		return 0;
-	}" LWS_HAS_PTHREAD_SETNAME_NP)
+if (LWS_HAVE_PTHREAD_H)
+	set(CMAKE_REQUIRED_FLAGS "-pthread")
+	CHECK_C_SOURCE_COMPILES("#define _GNU_SOURCE
+		#include <pthread.h>
+		int main(void) {
+			pthread_t th = 0;
+			pthread_setname_np(th, NULL);
+			return 0;
+		}" LWS_HAS_PTHREAD_SETNAME_NP)
+endif()
 
 CHECK_C_SOURCE_COMPILES("#include <stddef.h>
-	#include <getopt.h> 
-	int main(void) { 
+	#include <getopt.h>
+	int main(void) {
 		void *p = (void *)getopt_long;
 		return p != NULL;
 	}" LWS_HAS_GETOPT_LONG)
@@ -1365,13 +1371,15 @@ else()
 				lib/plat/freertos/freertos-pipe.c
 				lib/plat/freertos/freertos-service.c
 				lib/plat/freertos/freertos-sockets.c
-				lib/plat/freertos/freertos-resolv.c
 				lib/misc/romfs.c)
 			if (LWS_WITH_ESP32_HELPER)
 				list(APPEND SOURCES lib/plat/freertos/esp32/esp32-helpers.c)
 			endif()
 			if (LWS_WITH_FILE_OPS)
 				list(APPEND SOURCES lib/plat/freertos/freertos-file.c)
+			endif()
+			if (LWS_WITH_SYS_ASYNC_DNS)
+				list(APPEND SOURCES lib/plat/freertos/freertos-resolv.c)
 			endif()
 		else()
 			set(LWS_PLAT_UNIX 1)
@@ -1462,12 +1470,12 @@ if (LWS_WITH_ABSTRACT)
 		lib/abstract/transports/unit-test.c)
 endif()
 
-if (LWS_WITH_SMTP)
-	list(APPEND SOURCES
-		lib/abstract/protocols/smtp/smtp.c
-		lib/abstract/protocols/smtp/smtp-sequencer.c
-		)
-endif()
+#if (LWS_WITH_SMTP)
+#	list(APPEND SOURCES
+#		lib/abstract/protocols/smtp/smtp.c
+#		lib/abstract/protocols/smtp/smtp-sequencer.c
+#		)
+#endif()
 
 if (LWS_WITH_RANGES)
 	list(APPEND SOURCES
@@ -1498,7 +1506,7 @@ if (LWS_WITH_JOSE)
 		)
 endif()
 
-if (LWS_WITH_JOSE OR LWS_WITH_GENCRYPTO)
+if (LWS_WITH_TLS AND (LWS_WITH_JOSE OR LWS_WITH_GENCRYPTO))
 	list(APPEND SOURCES
 		lib/tls/lws-gencrypto-common.c)
 endif()
@@ -2220,7 +2228,7 @@ if ((LWS_ROLE_H1 OR LWS_ROLE_H2) AND NOT LWS_WITHOUT_TESTAPPS)
 				""
 				"")
 
-			if (LWS_WITH_CGI)
+			if (LWS_WITH_CGI AND LWS_WITH_TLS)
 			create_test_app(test-sshd "test-apps/test-sshd.c"
 				""
 				""
@@ -2419,7 +2427,7 @@ if (LWS_WITH_ACME)
 			      "plugins/acme-client/protocol_lws_acme_client.c" "" "")
 endif()
 
-if (LWS_WITH_GENERIC_SESSIONS AND LWS_ROLE_WS)
+if (LWS_WITH_GENERIC_SESSIONS AND LWS_ROLE_WS AND LWS_WITH_TLS)
 	create_plugin(protocol_generic_sessions ""
                       "plugins/generic-sessions/protocol_generic_sessions.c"
 		      "plugins/generic-sessions/utils.c"
@@ -2784,7 +2792,8 @@ message(" LWS_WITH_ACCESS_LOG = ${LWS_WITH_ACCESS_LOG}")
 message(" LWS_WITH_SERVER_STATUS = ${LWS_WITH_SERVER_STATUS}")
 message(" LWS_WITH_LEJP = ${LWS_WITH_LEJP}")
 message(" LWS_WITH_LEJP_CONF = ${LWS_WITH_LEJP_CONF}")
-message(" LWS_WITH_SMTP = ${LWS_WITH_SMTP}")
+# this is broken atm
+#message(" LWS_WITH_SMTP = ${LWS_WITH_SMTP}")
 message(" LWS_WITH_GENERIC_SESSIONS = ${LWS_WITH_GENERIC_SESSIONS}")
 message(" LWS_STATIC_PIC = ${LWS_STATIC_PIC}")
 message(" LWS_WITH_RANGES = ${LWS_WITH_RANGES}")

@@ -38,7 +38,7 @@ lws_sul_tls_cb(lws_sorted_usec_list_t *sul)
 			 (lws_usec_t)24 * 3600 * LWS_US_PER_SEC);
 }
 
-LWS_VISIBLE int
+int
 lws_context_init_server_ssl(const struct lws_context_creation_info *info,
 			    struct lws_vhost *vhost)
 {
@@ -72,10 +72,8 @@ lws_context_init_server_ssl(const struct lws_context_creation_info *info,
 			lwsl_notice(" SSL ciphers: '%s'\n",
 						info->ssl_cipher_list);
 
-		if (vhost->tls.use_ssl)
-			lwsl_notice(" Using SSL mode\n");
-		else
-			lwsl_notice(" Using non-SSL mode\n");
+		lwsl_notice(" Vhost '%s' using %sTLS mode\n",
+			    vhost->name, vhost->tls.use_ssl ? "" : "non-");
 	}
 
 	/*
@@ -124,16 +122,13 @@ lws_context_init_server_ssl(const struct lws_context_creation_info *info,
 }
 #endif
 
-LWS_VISIBLE int
+int
 lws_server_socket_service_ssl(struct lws *wsi, lws_sockfd_type accept_fd)
 {
 	struct lws_context *context = wsi->context;
 	struct lws_context_per_thread *pt = &context->pt[(int)wsi->tsi];
 	struct lws_vhost *vh;
-        char buf[256];
 	int n;
-
-        (void)buf;
 
 	if (!LWS_SSL_ENABLED(wsi->vhost))
 		return 0;
@@ -145,24 +140,16 @@ lws_server_socket_service_ssl(struct lws *wsi, lws_sockfd_type accept_fd)
 			lwsl_err("%s: leaking ssl\n", __func__);
 		if (accept_fd == LWS_SOCK_INVALID)
 			assert(0);
-		if (context->simultaneous_ssl_restriction &&
-		    context->simultaneous_ssl >=
-		    	    context->simultaneous_ssl_restriction) {
-			lwsl_notice("unable to deal with SSL connection\n");
+
+		if (lws_tls_restrict_borrow(context))
 			return 1;
-		}
 
 		if (lws_tls_server_new_nonblocking(wsi, accept_fd)) {
 			if (accept_fd != LWS_SOCK_INVALID)
 				compatible_close(accept_fd);
+			lws_tls_restrict_return(context);
 			goto fail;
 		}
-
-		if (context->simultaneous_ssl_restriction &&
-		    ++context->simultaneous_ssl ==
-				    context->simultaneous_ssl_restriction)
-			/* that was the last allowed SSL connection */
-			lws_gate_accepts(context, 0);
 
 #if defined(LWS_WITH_STATS)
 		context->updated = 1;

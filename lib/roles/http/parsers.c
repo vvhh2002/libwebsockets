@@ -58,8 +58,8 @@ _lws_create_ah(struct lws_context_per_thread *pt, ah_data_idx_t data_size)
 	ah->data_length = data_size;
 	pt->http.ah_pool_length++;
 
-	lwsl_info("%s: created ah %p (size %d): pool length %ld\n", __func__,
-		    ah, (int)data_size, (unsigned long)pt->http.ah_pool_length);
+	lwsl_info("%s: created ah %p (size %d): pool length %u\n", __func__,
+		    ah, (int)data_size, (unsigned int)pt->http.ah_pool_length);
 
 	return ah;
 }
@@ -71,9 +71,9 @@ _lws_destroy_ah(struct lws_context_per_thread *pt, struct allocated_headers *ah)
 		if ((*a) == ah) {
 			*a = ah->next;
 			pt->http.ah_pool_length--;
-			lwsl_info("%s: freed ah %p : pool length %ld\n",
+			lwsl_info("%s: freed ah %p : pool length %u\n",
 				    __func__, ah,
-				    (unsigned long)pt->http.ah_pool_length);
+				    (unsigned int)pt->http.ah_pool_length);
 			if (ah->data)
 				lws_free(ah->data);
 			lws_free(ah);
@@ -454,7 +454,7 @@ int lws_header_table_detach(struct lws *wsi, int autoservice)
 	return n;
 }
 
-LWS_VISIBLE int
+int
 lws_hdr_fragment_length(struct lws *wsi, enum lws_token_indexes h, int frag_idx)
 {
 	int n;
@@ -474,7 +474,7 @@ lws_hdr_fragment_length(struct lws *wsi, enum lws_token_indexes h, int frag_idx)
 	return 0;
 }
 
-LWS_VISIBLE int lws_hdr_total_length(struct lws *wsi, enum lws_token_indexes h)
+int lws_hdr_total_length(struct lws *wsi, enum lws_token_indexes h)
 {
 	int n;
 	int len = 0;
@@ -497,7 +497,7 @@ LWS_VISIBLE int lws_hdr_total_length(struct lws *wsi, enum lws_token_indexes h)
 	return len;
 }
 
-LWS_VISIBLE int lws_hdr_copy_fragment(struct lws *wsi, char *dst, int len,
+int lws_hdr_copy_fragment(struct lws *wsi, char *dst, int len,
 				      enum lws_token_indexes h, int frag_idx)
 {
 	int n = 0;
@@ -528,7 +528,7 @@ LWS_VISIBLE int lws_hdr_copy_fragment(struct lws *wsi, char *dst, int len,
 	return wsi->http.ah->frags[f].len;
 }
 
-LWS_VISIBLE int lws_hdr_copy(struct lws *wsi, char *dst, int len,
+int lws_hdr_copy(struct lws *wsi, char *dst, int len,
 			     enum lws_token_indexes h)
 {
 	int toklen = lws_hdr_total_length(wsi, h);
@@ -571,12 +571,12 @@ LWS_VISIBLE int lws_hdr_copy(struct lws *wsi, char *dst, int len,
 }
 
 #if defined(LWS_WITH_CUSTOM_HEADERS)
-LWS_VISIBLE int
+int
 lws_hdr_custom_length(struct lws *wsi, const char *name, int nlen)
 {
 	ah_data_idx_t ll;
 
-	if (!wsi->http.ah || wsi->http2_substream)
+	if (!wsi->http.ah || wsi->mux_substream)
 		return -1;
 
 	ll = wsi->http.ah->unk_ll_head;
@@ -595,14 +595,14 @@ lws_hdr_custom_length(struct lws *wsi, const char *name, int nlen)
 	return -1;
 }
 
-LWS_VISIBLE int
+int
 lws_hdr_custom_copy(struct lws *wsi, char *dst, int len, const char *name,
 		    int nlen)
 {
 	ah_data_idx_t ll;
 	int n;
 
-	if (!wsi->http.ah || wsi->http2_substream)
+	if (!wsi->http.ah || wsi->mux_substream)
 		return -1;
 
 	*dst = '\0';
@@ -674,6 +674,16 @@ lws_pos_in_bounds(struct lws *wsi)
 int LWS_WARN_UNUSED_RESULT
 lws_hdr_simple_create(struct lws *wsi, enum lws_token_indexes h, const char *s)
 {
+	if (!*s) {
+		/*
+		 * If we get an empty string, then remove any entry for the
+		 * header
+		 */
+		wsi->http.ah->frag_index[h] = 0;
+
+		return 0;
+	}
+
 	wsi->http.ah->nfrag++;
 	if (wsi->http.ah->nfrag == LWS_ARRAY_SIZE(wsi->http.ah->frags)) {
 		lwsl_warn("More hdr frags than we can deal with, dropping\n");
@@ -1086,7 +1096,7 @@ swallow:
 			 * a known header, we'll snip this.
 			 */
 
-			if (!wsi->http2_substream && !ah->unk_pos) {
+			if (!wsi->mux_substream && !ah->unk_pos) {
 				ah->unk_pos = ah->pos;
 				/*
 				 * Prepare new unknown header linked-list entry
@@ -1108,7 +1118,7 @@ swallow:
 			pos = ah->lextable_pos;
 
 #if defined(LWS_WITH_CUSTOM_HEADERS)
-			if (!wsi->http2_substream && pos < 0 && c == ':') {
+			if (!wsi->mux_substream && pos < 0 && c == ':') {
 #if defined(_DEBUG)
 				char dotstar[64];
 				int uhlen;
@@ -1182,7 +1192,7 @@ nope:
 				/* b7 = 0, end or 3-byte */
 				if (lextable[pos] < FAIL_CHAR) {
 #if defined(LWS_WITH_CUSTOM_HEADERS)
-					if (!wsi->http2_substream) {
+					if (!wsi->mux_substream) {
 						/*
 						 * We hit a terminal marker, so
 						 * we recognized this header...
@@ -1228,7 +1238,7 @@ nope:
 #if !defined(LWS_WITH_CUSTOM_HEADERS)
 						ah->parser_state = WSI_TOKEN_SKIPPING;
 #endif
-						if (wsi->http2_substream)
+						if (wsi->mux_substream)
 							ah->parser_state = WSI_TOKEN_SKIPPING;
 						break;
 					}
@@ -1239,7 +1249,7 @@ nope:
 					 * We have the method, this is just an
 					 * unknown header then
 					 */
-					if (!wsi->http2_substream)
+					if (!wsi->mux_substream)
 						goto unknown_hdr;
 					else
 						break;
@@ -1267,7 +1277,7 @@ nope:
 			}
 			if (ah->lextable_pos < 0) {
 #if defined(LWS_WITH_CUSTOM_HEADERS)
-				if (!wsi->http2_substream)
+				if (!wsi->mux_substream)
 					goto unknown_hdr;
 #endif
 				/*
@@ -1322,7 +1332,7 @@ nope:
 unknown_hdr:
 			//ah->parser_state = WSI_TOKEN_SKIPPING;
 			//break;
-			if (!wsi->http2_substream)
+			if (!wsi->mux_substream)
 				break;
 #endif
 
