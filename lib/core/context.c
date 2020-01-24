@@ -1003,6 +1003,48 @@ lws_context_destroy2(struct lws_context *context)
 	lws_context_destroy3(context);
 }
 
+#if defined(LWS_WITH_NETWORK)
+static void
+lws_pt_destroy(struct lws_context_per_thread *pt)
+{
+	volatile struct lws_foreign_thread_pollfd *ftp, *next;
+	volatile struct lws_context_per_thread *vpt;
+	int n;
+
+	assert(!pt->is_destroyed);
+	pt->destroy_self = 0;
+
+	vpt = (volatile struct lws_context_per_thread *)pt;
+	ftp = vpt->foreign_pfd_list;
+	while (ftp) {
+		next = ftp->next;
+		lws_free((void *)ftp);
+		ftp = next;
+	}
+	vpt->foreign_pfd_list = NULL;
+
+	for (n = 0; (unsigned int)n < pt->fds_count; n++) {
+		struct lws *wsi = wsi_from_fd(pt->context, pt->fds[n].fd);
+		if (!wsi)
+			continue;
+
+		if (wsi->event_pipe)
+			lws_destroy_event_pipe(wsi);
+		else
+			lws_close_free_wsi(wsi,
+				LWS_CLOSE_STATUS_NOSTATUS_CONTEXT_DESTROY,
+				"ctx destroy"
+				/* no protocol close */);
+		n--;
+	}
+	lws_pt_mutex_destroy(pt);
+
+	pt->is_destroyed = 1;
+
+	lwsl_info("%s: pt destroyed\n", __func__);
+}
+#endif
+
 /*
  * Begin the context takedown
  */
@@ -1011,10 +1053,8 @@ void
 lws_context_destroy(struct lws_context *context)
 {
 #if defined(LWS_WITH_NETWORK)
-	volatile struct lws_foreign_thread_pollfd *ftp, *next;
-	volatile struct lws_context_per_thread *vpt;
 	struct lws_vhost *vh = NULL;
-	int n, m;
+	int m, deferred_pt = 0;
 #endif
 
 	if (!context)
@@ -1044,8 +1084,6 @@ lws_context_destroy(struct lws_context *context)
 	lwsl_info("%s: ctx %p\n", __func__, context);
 
 	context->being_destroyed = 1;
-	context->being_destroyed1 = 1;
-	context->requested_kill = 1;
 
 #if defined(LWS_WITH_NETWORK)
 	lws_state_transition(&context->mgr_system, LWS_SYSTATE_POLICY_INVALID);
@@ -1054,31 +1092,26 @@ lws_context_destroy(struct lws_context *context)
 	while (m--) {
 		struct lws_context_per_thread *pt = &context->pt[m];
 
-		vpt = (volatile struct lws_context_per_thread *)pt;
-		ftp = vpt->foreign_pfd_list;
-		while (ftp) {
-			next = ftp->next;
-			lws_free((void *)ftp);
-			ftp = next;
-		}
-		vpt->foreign_pfd_list = NULL;
+		if (pt->is_destroyed)
+			continue;
 
-		for (n = 0; (unsigned int)n < context->pt[m].fds_count; n++) {
-			struct lws *wsi = wsi_from_fd(context, pt->fds[n].fd);
-			if (!wsi)
-				continue;
-
-			if (wsi->event_pipe)
-				lws_destroy_event_pipe(wsi);
-			else
-				lws_close_free_wsi(wsi,
-					LWS_CLOSE_STATUS_NOSTATUS_CONTEXT_DESTROY,
-					"ctx destroy"
-					/* no protocol close */);
-			n--;
+		if (pt->inside_lws_service) {
+			pt->destroy_self = 1;
+			deferred_pt = 1;
+			continue;
 		}
-		lws_pt_mutex_destroy(pt);
+
+		lws_pt_destroy(pt);
 	}
+
+	if (deferred_pt) {
+		lwsl_info("%s: waiting for deferred pt close\n", __func__);
+		lws_cancel_service(context);
+		return;
+	}
+
+	context->being_destroyed1 = 1;
+	context->requested_kill = 1;
 
 	/*
 	 * inform all the protocols that they are done and will have no more

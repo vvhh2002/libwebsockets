@@ -352,7 +352,9 @@ lws_h1_server_socket_service(struct lws *wsi, struct lws_pollfd *pollfd)
 		 * exhausted and we tried to do a read of some kind.
 		 */
 
-		buffered = lws_buflist_aware_read(pt, wsi, &ebuf, __func__);
+		ebuf.token = NULL;
+		ebuf.len = 0;
+		buffered = lws_buflist_aware_read(pt, wsi, &ebuf, 0, __func__);
 		switch (ebuf.len) {
 		case 0:
 			lwsl_info("%s: read 0 len a\n", __func__);
@@ -925,7 +927,7 @@ rops_adoption_bind_h1(struct lws *wsi, int type, const char *vh_prot_name)
 #if defined(LWS_WITH_CLIENT)
 
 static const char * const http_methods[] = {
-	"GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE", "CONNECT"
+	"GET", "POST", "OPTIONS", "HEAD", "PUT", "PATCH", "DELETE", "CONNECT"
 };
 
 static int

@@ -936,7 +936,8 @@ lws_destroy_event_pipe(struct lws *wsi)
 	lwsl_info("%s\n", __func__);
 	__remove_wsi_socket_from_fds(wsi);
 
-	if (wsi->context->event_loop_ops->wsi_logical_close) {
+	if (!wsi->context->event_loop_ops->destroy_wsi &&
+	    wsi->context->event_loop_ops->wsi_logical_close) {
 		wsi->context->event_loop_ops->wsi_logical_close(wsi);
 		lws_plat_pipe_close(wsi);
 		return;
@@ -1440,7 +1441,7 @@ lws_vhost_active_conns(struct lws *wsi, struct lws **nwsi, const char *adsin)
 			 * h2: in usable state already: just use it without
 			 *     going through the queue
 			 */
-			if (w->client_h2_alpn &&
+			if (w->client_h2_alpn && w->client_mux_migrated &&
 			    (lwsi_state(w) == LRS_H2_WAITING_TO_SEND_HEADERS ||
 			     lwsi_state(w) == LRS_ESTABLISHED)) {
 
