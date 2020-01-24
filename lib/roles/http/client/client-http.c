@@ -557,7 +557,7 @@ client_http_body_sent:
 
 			eb.token = NULL;
 			eb.len = 0;
-			buffered = lws_buflist_aware_read(pt, wsi, &eb, __func__);
+			buffered = lws_buflist_aware_read(pt, wsi, &eb, 0, __func__);
 			lwsl_debug("%s: buflist-aware-read %d %d\n", __func__,
 					buffered, eb.len);
 			if (eb.len == LWS_SSL_CAPABLE_MORE_SERVICE)
@@ -721,7 +721,7 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 	int n, port = 0, ssl = 0;
 	int close_reason = LWS_CLOSE_STATUS_PROTOCOL_ERR;
 	const char *prot, *ads = NULL, *path, *cce = NULL;
-	struct allocated_headers *ah;
+	struct allocated_headers *ah, *ah1;
 	struct lws *w = lws_client_wsi_effective(wsi);
 	struct lws *nwsi = lws_get_network_wsi(wsi);
 	char *p, *q;
@@ -802,7 +802,7 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 	if (ah)
 		ah->http_response = n;
 
-	if (
+	if (!wsi->client_no_follow_redirect &&
 #if defined(LWS_WITH_HTTP_PROXY)
 	    !wsi->http.proxy_clientside &&
 #endif
@@ -1016,10 +1016,12 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 		 * we seem to be good to go, give client last chance to check
 		 * headers and OK it
 		 */
+		ah1 = w->http.ah;
+		w->http.ah = ah;
 		if (w->protocol->callback(w,
 				LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH,
 					    w->user_space, NULL, 0)) {
-
+			w->http.ah = ah1;
 			cce = "HS: disallowed by client filter";
 			goto bail2;
 		}
@@ -1033,9 +1035,12 @@ lws_client_interpret_server_handshake(struct lws *wsi)
 		if (w->protocol->callback(w,
 					    LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP,
 					    w->user_space, NULL, 0)) {
+			w->http.ah = ah1;
 			cce = "HS: disallowed at ESTABLISHED";
 			goto bail3;
 		}
+
+		w->http.ah = ah1;
 
 		/*
 		 * for pipelining, master needs to keep his ah... guys who
@@ -1337,7 +1342,7 @@ lws_http_client_read(struct lws *wsi, char **buf, int *len)
 	eb.token = NULL;
 	eb.len = 0;
 
-	buffered = lws_buflist_aware_read(pt, wsi, &eb, __func__);
+	buffered = lws_buflist_aware_read(pt, wsi, &eb, 0, __func__);
 	*buf = (char *)eb.token;
 	*len = 0;
 

@@ -346,61 +346,89 @@ lws_service_adjust_timeout(struct lws_context *context, int timeout_ms, int tsi)
  */
 int
 lws_buflist_aware_read(struct lws_context_per_thread *pt, struct lws *wsi,
-		       struct lws_tokens *ebuf, const char *hint)
+		       struct lws_tokens *ebuf, char fr, const char *hint)
 {
-	int n, prior = (int)lws_buflist_next_segment_len(&wsi->buflist, NULL);
-
+	int n, e, bns;
+	uint8_t *ep, *b;
 
 	// lwsl_debug("%s: wsi %p: %s: prior %d\n", __func__, wsi, hint, prior);
 	// lws_buflist_describe(&wsi->buflist, wsi, __func__);
 
 	(void)hint;
-	ebuf->token = pt->serv_buf + LWS_PRE;
-	n = lws_ssl_capable_read(wsi, pt->serv_buf + LWS_PRE,
-				 wsi->context->pt_serv_buf_size - LWS_PRE);
-	ebuf->len = n;
+	if (!ebuf->token) {
+		ebuf->token = pt->serv_buf + LWS_PRE;
+		ebuf->len = wsi->context->pt_serv_buf_size - LWS_PRE;
+	}
+	e = ebuf->len;
+	ep = ebuf->token;
 
-	lwsl_info("%s: wsi %p: %s: ssl_capable_read %d (prior %d)\n", __func__,
-			wsi, hint, ebuf->len, prior);
+	/* h2 or muxed stream... must force the read due to HOL blocking */
 
-	if (n == LWS_SSL_CAPABLE_ERROR && !prior) {
-		lwsl_info("%s: SSL_CAPABLE_ERROR with no prior\n", __func__);
+	if (wsi->mux_substream)
+		fr = 1;
+
+	/* there's something on the buflist? */
+
+	bns = (int)lws_buflist_next_segment_len(&wsi->buflist, &ebuf->token);
+	b = ebuf->token;
+
+	if (!fr && bns)
+		goto buflist_material;
+
+	/* we're going to read something */
+
+	ebuf->token = ep;
+	ebuf->len = n = lws_ssl_capable_read(wsi, ep, e);
+
+	lwsl_info("%s: wsi %p: %s: ssl_capable_read %d\n", __func__,
+			wsi, hint, ebuf->len);
+
+	if (!bns && /* only acknowledge error when we handled buflist content */
+	    n == LWS_SSL_CAPABLE_ERROR) {
+		lwsl_debug("%s: SSL_CAPABLE_ERROR\n", __func__);
 		return -1;
 	}
 
-	if (ebuf->len < 0 && prior)
-		goto get_from_buflist;
+	if (n <= 0 && bns)
+		/*
+		 * There wasn't anything to read yet, but there's something
+		 * on the buflist to give him
+		 */
+		goto buflist_material;
 
-	if (ebuf->len <= 0)
-		return 0;
+	/* we read something */
 
-	/* nothing in buflist already?  Then just use what we read */
+	if (fr && bns) {
+		/*
+		 * Stash what we read, since there's earlier buflist material
+		 */
 
-	if (!prior)
-		return 0;
+		n = lws_buflist_append_segment(&wsi->buflist, ebuf->token, ebuf->len);
+		if (n < 0)
+			return -1;
+		if (n && lws_dll2_is_detached(&wsi->dll_buflist))
+			lws_dll2_add_head(&wsi->dll_buflist,
+					  &pt->dll_buflist_owner);
 
-	/* stash what we read */
-
-	// lwsl_debug("%s: appending %d\n", __func__, ebuf->len);
-	n = lws_buflist_append_segment(&wsi->buflist, ebuf->token, ebuf->len);
-	if (n < 0)
-		return -1;
-	if (n) {
-		// lwsl_debug("%s: added %p to rxflow list\n", __func__, wsi);
-		if (lws_dll2_is_detached(&wsi->dll_buflist))
-			lws_dll2_add_head(&wsi->dll_buflist, &pt->dll_buflist_owner);
+		goto buflist_material;
 	}
 
-	/* get the first buflist guy in line */
+	/*
+	 * directly return what we read
+	 */
 
-get_from_buflist:
+	return 0;
 
-	ebuf->len = (int)lws_buflist_next_segment_len(&wsi->buflist,
-						      &ebuf->token);
+buflist_material:
 
-	lwsl_debug("%s: wsi %p: get from buflist told %d\n", __func__, wsi, ebuf->len);
+	ebuf->token = b;
+	if (e < bns)
+		/* restrict to e, if more than e available */
+		ebuf->len = e;
+	else
+		ebuf->len = bns;
 
-	return 1; /* came from buflist */
+	return 1; /* from buflist */
 }
 
 int
@@ -412,7 +440,6 @@ lws_buflist_aware_finished_consuming(struct lws *wsi, struct lws_tokens *ebuf,
 
 	//lwsl_debug("%s %s consuming buffered %d used %zu / %zu\n", __func__, hint,
 	//		buffered, (size_t)used, (size_t)ebuf->len);
-
 	// lws_buflist_describe(&wsi->buflist, wsi, __func__);
 
 	/* it's in the buflist; we didn't use any */
@@ -650,6 +677,7 @@ lws_service_fd_tsi(struct lws_context *context, struct lws_pollfd *pollfd,
 	}
 #endif
 	wsi->could_have_pending = 0; /* clear back-to-back write detection */
+	pt->inside_lws_service = 1;
 
 	/* okay, what we came here to do... */
 
@@ -661,6 +689,7 @@ lws_service_fd_tsi(struct lws_context *context, struct lws_pollfd *pollfd,
 
 	switch ((wsi->role_ops->handle_POLLIN)(pt, wsi, pollfd)) {
 	case LWS_HPI_RET_WSI_ALREADY_DIED:
+		pt->inside_lws_service = 0;
 		return 1;
 	case LWS_HPI_RET_HANDLED:
 		break;
@@ -685,6 +714,7 @@ close_and_handled:
 		 * we can't clear revents now because it'd be the wrong guy's
 		 * revents
 		 */
+		pt->inside_lws_service = 0;
 		return 1;
 	default:
 		assert(0);
@@ -693,6 +723,7 @@ close_and_handled:
 handled:
 #endif
 	pollfd->revents = 0;
+	pt->inside_lws_service = 0;
 
 	return 0;
 }

@@ -459,8 +459,11 @@ struct lws_context_per_thread {
 	unsigned char tid;
 
 	unsigned char inside_service:1;
+	unsigned char inside_lws_service:1;
 	unsigned char event_loop_foreign:1;
 	unsigned char event_loop_destroy_processing_done:1;
+	unsigned char destroy_self:1;
+	unsigned char is_destroyed:1;
 #ifdef _WIN32
 	unsigned char interrupt_requested:1;
 #endif
@@ -800,6 +803,7 @@ struct lws {
 	unsigned int			client_mux_substream:1;
 	unsigned int			client_mux_migrated:1;
 	unsigned int			client_subsequent_mime_part:1;
+	unsigned int                    client_no_follow_redirect:1;
 #endif
 
 #ifdef _WIN32
@@ -1290,7 +1294,7 @@ lws_seq_pt_init(struct lws_context_per_thread *pt);
 
 int
 lws_buflist_aware_read(struct lws_context_per_thread *pt, struct lws *wsi,
-		       struct lws_tokens *ebuf, const char *hint);
+		       struct lws_tokens *ebuf, char fr, const char *hint);
 int
 lws_buflist_aware_finished_consuming(struct lws *wsi, struct lws_tokens *ebuf,
 				     int used, int buffered, const char *hint);
