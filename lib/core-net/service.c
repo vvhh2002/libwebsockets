@@ -448,11 +448,13 @@ lws_buflist_aware_finished_consuming(struct lws *wsi, struct lws_tokens *ebuf,
 		return 0;
 
 	if (used && buffered) {
-		m = (int)lws_buflist_use_segment(&wsi->buflist, (size_t)used);
-		// lwsl_notice("%s: used %d, next %d\n", __func__, used, m);
-		// lws_buflist_describe(&wsi->buflist, wsi, __func__);
-		if (m)
-			return 0;
+		if (wsi->buflist) {
+			m = (int)lws_buflist_use_segment(&wsi->buflist, (size_t)used);
+			// lwsl_notice("%s: used %d, next %d\n", __func__, used, m);
+			// lws_buflist_describe(&wsi->buflist, wsi, __func__);
+			if (m)
+				return 0;
+		}
 
 		lwsl_info("%s: removed %p from dll_buflist\n", __func__, wsi);
 		lws_dll2_remove(&wsi->dll_buflist);
@@ -511,11 +513,15 @@ lws_service_do_ripe_rxflow(struct lws_context_per_thread *pt)
 			   (unsigned long)wsi->wsistate);
 
 		if (!lws_is_flowcontrolled(wsi) &&
-		    lwsi_state(wsi) != LRS_DEFERRING_ACTION &&
-		    (wsi->role_ops->handle_POLLIN)(pt, wsi, &pfd) ==
+		    lwsi_state(wsi) != LRS_DEFERRING_ACTION) {
+			pt->inside_lws_service = 1;
+
+			if ((wsi->role_ops->handle_POLLIN)(pt, wsi, &pfd) ==
 						   LWS_HPI_RET_PLEASE_CLOSE_ME)
-			lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS,
-					   "close_and_handled");
+				lws_close_free_wsi(wsi, LWS_CLOSE_STATUS_NOSTATUS,
+						"close_and_handled");
+			pt->inside_lws_service = 0;
+		}
 
 	} lws_end_foreach_dll_safe(d, d1);
 

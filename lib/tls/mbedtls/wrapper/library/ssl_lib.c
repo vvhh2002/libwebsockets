@@ -1672,7 +1672,7 @@ _openssl_alpn_to_mbedtls(struct alpn_ctx *ac, char ***palpn_protos)
 			break;
 	}
 
-	if (!len)
+	if (p - ac->data < ac->len && !len)
 		count++;
 
 	if (!count)
