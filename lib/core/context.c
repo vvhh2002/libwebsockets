@@ -1009,7 +1009,6 @@ lws_pt_destroy(struct lws_context_per_thread *pt)
 {
 	volatile struct lws_foreign_thread_pollfd *ftp, *next;
 	volatile struct lws_context_per_thread *vpt;
-	int n;
 
 	assert(!pt->is_destroyed);
 	pt->destroy_self = 0;
@@ -1023,10 +1022,11 @@ lws_pt_destroy(struct lws_context_per_thread *pt)
 	}
 	vpt->foreign_pfd_list = NULL;
 
-	for (n = 0; (unsigned int)n < pt->fds_count; n++) {
-		struct lws *wsi = wsi_from_fd(pt->context, pt->fds[n].fd);
+	while (pt->fds_count) {
+		struct lws *wsi = wsi_from_fd(pt->context, pt->fds[0].fd);
+
 		if (!wsi)
-			continue;
+			break;
 
 		if (wsi->event_pipe)
 			lws_destroy_event_pipe(wsi);
@@ -1035,7 +1035,6 @@ lws_pt_destroy(struct lws_context_per_thread *pt)
 				LWS_CLOSE_STATUS_NOSTATUS_CONTEXT_DESTROY,
 				"ctx destroy"
 				/* no protocol close */);
-		n--;
 	}
 	lws_pt_mutex_destroy(pt);
 
@@ -1057,14 +1056,17 @@ lws_context_destroy(struct lws_context *context)
 	int m, deferred_pt = 0;
 #endif
 
-	if (!context)
+	if (!context || context->inside_context_destroy)
 		return;
+
+	context->inside_context_destroy = 1;
+
 #if defined(LWS_WITH_NETWORK)
 	if (context->finalize_destroy_after_internal_loops_stopped) {
 		if (context->event_loop_ops->destroy_context2)
 			context->event_loop_ops->destroy_context2(context);
 		lws_context_destroy3(context);
-
+		/* context is invalid, no need to reset inside flag */
 		return;
 	}
 #endif
@@ -1072,12 +1074,13 @@ lws_context_destroy(struct lws_context *context)
 		if (!context->being_destroyed2) {
 			lws_context_destroy2(context);
 
-			return;
+			goto out;
 		}
 		lwsl_info("%s: ctx %p: already being destroyed\n",
 			    __func__, context);
 
 		lws_context_destroy3(context);
+		/* context is invalid, no need to reset inside flag */
 		return;
 	}
 
@@ -1107,7 +1110,7 @@ lws_context_destroy(struct lws_context *context)
 	if (deferred_pt) {
 		lwsl_info("%s: waiting for deferred pt close\n", __func__);
 		lws_cancel_service(context);
-		return;
+		goto out;
 	}
 
 	context->being_destroyed1 = 1;
@@ -1152,7 +1155,7 @@ lws_context_destroy(struct lws_context *context)
 	if (context->event_loop_ops->destroy_context1) {
 		context->event_loop_ops->destroy_context1(context);
 
-		return;
+		goto out;
 	}
 #endif
 
@@ -1164,5 +1167,11 @@ lws_context_destroy(struct lws_context *context)
 #endif
 #endif
 
+	context->inside_context_destroy = 0;
 	lws_context_destroy2(context);
+
+	return;
+
+out:
+	context->inside_context_destroy = 0;
 }
